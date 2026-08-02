@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Секретные ключи и переменные окружения
+.env
+.env.local
+.env.production
