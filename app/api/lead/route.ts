@@ -136,6 +136,16 @@ async function sendTelegramAdminNotification({
     chat_id: chatId,
     text: messageText,
     parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: '📅 Записать на пробное',
+            callback_data: `assign_lesson:${leadId}`,
+          },
+        ],
+      ],
+    },
   };
 
   if (rawTopicId && !isNaN(Number(rawTopicId))) {
