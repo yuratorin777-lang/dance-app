@@ -89,6 +89,70 @@ async function generateGrokNote(parentName: string, childName: string, childAge:
   }
 }
 
+// Функция отправки карточки заявки в закрытую группу Telegram
+async function sendTelegramAdminNotification({
+  leadId,
+  parentName,
+  childName,
+  childAge,
+  phone,
+  city,
+  aiNote,
+}: {
+  leadId: string;
+  parentName: string;
+  childName: string;
+  childAge: string;
+  phone: string;
+  city: string;
+  aiNote: string;
+}) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  const topicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1';
+
+  if (!botToken || !chatId) {
+    console.warn('Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID missing.');
+    return;
+  }
+
+  const ageText = childAge ? `${childAge} лет` : 'не указан';
+  const childInfo = childName ? `${childName} (${ageText})` : 'не указан';
+
+  const messageText = `
+🔥 <b>НОВАЯ ЗАЯВКА С САЙТА!</b>
+
+🆔 <b>ID Заявки:</b> <code>${leadId}</code>
+👤 <b>Родитель:</b> ${parentName}
+👶 <b>Ребенок:</b> ${childInfo}
+📞 <b>Телефон:</b> <code>${phone}</code>
+📍 <b>Город:</b> ${city}
+
+🧠 <b>Заметка ИИ (Grok):</b>
+<i>${aiNote}</i>
+`.trim();
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_thread_id: Number(topicId),
+        text: messageText,
+        parse_mode: 'HTML',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('Failed to send Telegram message:', errorData);
+    }
+  } catch (err) {
+    console.error('Error sending Telegram admin notification:', err);
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { parent_name, child_name, phone, city } = await req.json();
@@ -162,6 +226,7 @@ export async function POST(req: NextRequest) {
       dateStr             // K: Дата создания (created_at) -> YYYY-MM-DD
     ];
 
+    // 1. Сохраняем в Google Таблицу
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: 'leads!A:K',
@@ -169,6 +234,17 @@ export async function POST(req: NextRequest) {
       requestBody: {
         values: [newRow],
       },
+    });
+
+    // 2. Отправляем карточку заявки в тему «Новые заявки» Telegram-группы
+    await sendTelegramAdminNotification({
+      leadId,
+      parentName: parent_name,
+      childName: parsedChildName,
+      childAge: parsedChildAge,
+      phone,
+      city: leadCity,
+      aiNote,
     });
 
     const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || 'BabyDanceBot';
