@@ -64,19 +64,42 @@ export async function POST(req: NextRequest) {
 
     const { sheets, spreadsheetId } = instance;
 
+    // Генерируем уникальный ID заявки (например: LD-5839)
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const leadId = `LD-${randomNum}`;
+
+    // Пытаемся отделить имя ребенка от возраста, если написано "Ева 3 года"
+    let parsedChildName = child_name || '';
+    let parsedChildAge = '';
+
+    if (child_name) {
+      const parts = child_name.split(',');
+      if (parts.length > 1) {
+        parsedChildName = parts[0].trim();
+        parsedChildAge = parts.slice(1).join(',').trim();
+      }
+    }
+
     const dateStr = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+
+    // Строго формируем порядок колонок от A до K:
     const newRow = [
-      dateStr,           // Дата и время
-      parent_name,       // Имя родителя
-      child_name || '',  // Имя и возраст ребенка
-      phone,             // Телефон
-      city || 'Серпухов', // Город / Филиал
-      'Новая'            // Статус заявки
+      leadId,             // A: ID Заявки (lead_id)
+      parent_name,        // B: ФИО Родителя (parent_name)
+      parsedChildName,    // C: Имя ребенка (child_name)
+      parsedChildAge,     // D: Возраст ребенка (child_age)
+      phone,              // E: Телефон (phone)
+      city || 'Серпухов', // F: Город (city)
+      '-',                // G: Telegram Никнейм (tg_username)
+      'Новая',            // H: Статус заявки (status)
+      '-',                // I: Дата 1-го занятия (first_lesson_date)
+      'Заявка с веб-сайта',// J: Заметки ИИ / Админа (notes)
+      dateStr             // K: Дата создания (created_at)
     ];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'leads!A:F',
+      range: 'leads!A:K',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [newRow],
@@ -84,7 +107,7 @@ export async function POST(req: NextRequest) {
     });
 
     const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || 'BabyDanceBot';
-    const tg_url = `https://t.me/${botUsername}?start=lead`;
+    const tg_url = `https://t.me/${botUsername}?start=${leadId}`;
 
     return NextResponse.json({
       status: 'success',
