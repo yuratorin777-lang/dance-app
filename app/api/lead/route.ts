@@ -3,13 +3,44 @@ import { google } from 'googleapis';
 
 export const dynamic = 'force-dynamic';
 
-function parsePrivateKey(key: string | undefined): string {
-  if (!key) return '';
-  // Очищаем кавычки в начале и конце, если они попали из .env
-  let cleanedKey = key.trim().replace(/^["']|["']$/g, '');
-  // Заменяем экранированные \n на реальные переносы строк
-  cleanedKey = cleanedKey.replace(/\\n/g, '\n');
-  return cleanedKey;
+async function getGoogleSheetsInstance() {
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
+
+  // 1. Очищаем от внешних кавычек
+  privateKey = privateKey.trim().replace(/^["']|["']$/g, '');
+
+  // 2. Превращаем все варианты символов \n в настоящие переносы строк
+  privateKey = privateKey.replace(/\\n/g, '\n');
+
+  // 3. Страховка: если ключ все еще в одну строчку без переносов, форматируем PEM вручную
+  if (!privateKey.includes('\n') && privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+    privateKey = privateKey
+      .replace('-----BEGIN PRIVATE KEY-----', '-----BEGIN PRIVATE KEY-----\n')
+      .replace('-----END PRIVATE KEY-----', '\n-----END PRIVATE KEY-----');
+  }
+
+  const clientEmail = (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL)?.trim();
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID?.trim();
+
+  if (!clientEmail || !privateKey || !spreadsheetId) {
+    console.error('Google Sheets env variables missing in dance-app', {
+      hasEmail: !!clientEmail,
+      hasKey: !!privateKey,
+      hasSheetId: !!spreadsheetId
+    });
+    return null;
+  }
+
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey,
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+
+  const sheets = google.sheets({ version: 'v4', auth });
+  return { sheets, spreadsheetId };
 }
 
 export async function POST(req: NextRequest) {
@@ -23,31 +54,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-
-    if (!clientEmail || !rawPrivateKey || !spreadsheetId) {
-      console.error('Google Sheets env variables missing in dance-app', {
-        hasEmail: !!clientEmail,
-        hasKey: !!rawPrivateKey,
-        hasSheetId: !!spreadsheetId,
-      });
+    const instance = await getGoogleSheetsInstance();
+    if (!instance) {
       return NextResponse.json(
         { status: 'error', message: 'Ошибка конфигурации сервера' },
         { status: 500 }
       );
     }
 
-    const privateKey = parsePrivateKey(rawPrivateKey);
-
-    const auth = new google.auth.JWT({
-      email: clientEmail,
-      key: privateKey,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    const sheets = google.sheets({ version: 'v4', auth });
+    const { sheets, spreadsheetId } = instance;
 
     const dateStr = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
     const newRow = [
