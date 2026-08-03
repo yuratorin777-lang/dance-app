@@ -68,19 +68,25 @@ export async function POST(req: NextRequest) {
     const randomNum = Math.floor(1000 + Math.random() * 9000);
     const leadId = `LD-${randomNum}`;
 
-    // Пытаемся отделить имя ребенка от возраста, если написано "Ева 3 года"
-    let parsedChildName = child_name || '';
+    // Разделяем имя и возраст ребенка (например "Ева 4 года" -> Имя: "Ева", Возраст: "4 года")
+    let parsedChildName = (child_name || '').trim();
     let parsedChildAge = '';
 
-    if (child_name) {
-      const parts = child_name.split(',');
-      if (parts.length > 1) {
-        parsedChildName = parts[0].trim();
-        parsedChildAge = parts.slice(1).join(',').trim();
+    if (parsedChildName) {
+      // Ищем первое появление цифры (например: "Ева 4 года" или "Ева, 4 года")
+      const match = parsedChildName.match(/^([^\d,]+)[,\s]+(\d+.*)$/);
+      if (match) {
+        parsedChildName = match[1].trim();
+        parsedChildAge = match[2].trim();
       }
     }
 
-    const dateStr = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+    // Форматируем дату строго как YYYY-MM-DD
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
 
     // Строго формируем порядок колонок от A до K:
     const newRow = [
@@ -94,7 +100,7 @@ export async function POST(req: NextRequest) {
       'Новая',            // H: Статус заявки (status)
       '-',                // I: Дата 1-го занятия (first_lesson_date)
       'Заявка с веб-сайта',// J: Заметки ИИ / Админа (notes)
-      dateStr             // K: Дата создания (created_at)
+      dateStr             // K: Дата создания (created_at) -> 2026-08-03
     ];
 
     await sheets.spreadsheets.values.append({
