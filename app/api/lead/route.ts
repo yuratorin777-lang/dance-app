@@ -247,7 +247,7 @@ export async function POST(req: NextRequest) {
       phone,              // E: Телефон (phone)
       leadCity,           // F: Город (city)
       '-',                // G: Telegram Никнейм (tg_username)
-      'Новая',            // H: Статус заявки (status)
+      'Новая заявка',            // H: Статус заявки (status)
       '-',                // I: Дата 1-го занятия (first_lesson_date)
       aiNote,             // J: Заметки ИИ (от Grok)
       dateStr             // K: Дата создания (created_at) -> YYYY-MM-DD
