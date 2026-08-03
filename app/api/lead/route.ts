@@ -43,6 +43,52 @@ async function getGoogleSheetsInstance() {
   return { sheets, spreadsheetId };
 }
 
+// Функция генерации заметок через Grok (xAI)
+async function generateGrokNote(parentName: string, childName: string, childAge: string, city: string): Promise<string> {
+  const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+  
+  if (!apiKey) {
+    return 'Заявка с веб-сайта';
+  }
+
+  try {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-beta',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты администратор детской танцевальной студии. Напиши очень короткую заметку для менеджера по новой заявке (1 предложение на русском языке): оцени возраст ребенка для занятий и дай рекомендацию по звонку.'
+          },
+          {
+            role: 'user',
+            content: `Родитель: ${parentName}, Ребенок: ${childName}, Возраст: ${childAge || 'не указан'}, Город: ${city}`
+          }
+        ],
+        max_tokens: 50,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Grok API error response:', await response.text());
+      return 'Заявка с веб-сайта';
+    }
+
+    const data = await response.json();
+    const note = data.choices?.[0]?.message?.content?.trim();
+    return note || 'Заявка с веб-сайта';
+  } catch (err) {
+    console.error('Error connecting to Grok API:', err);
+    return 'Заявка с веб-сайта';
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { parent_name, child_name, phone, city } = await req.json();
@@ -68,39 +114,52 @@ export async function POST(req: NextRequest) {
     const randomNum = Math.floor(1000 + Math.random() * 9000);
     const leadId = `LD-${randomNum}`;
 
-    // Разделяем имя и возраст ребенка (например "Ева 4 года" -> Имя: "Ева", Возраст: "4 года")
-    let parsedChildName = (child_name || '').trim();
+    // Точный парсинг имени и чистого числа возраста
+    const rawChildInput = (child_name || '').trim();
+    let parsedChildName = rawChildInput;
     let parsedChildAge = '';
 
-    if (parsedChildName) {
-      // Ищем первое появление цифры (например: "Ева 4 года" или "Ева, 4 года")
-      const match = parsedChildName.match(/^([^\d,]+)[,\s]+(\d+.*)$/);
-      if (match) {
-        parsedChildName = match[1].trim();
-        parsedChildAge = match[2].trim();
+    if (rawChildInput) {
+      // 1. Находим первую цифру в строке — это наш возраст
+      const ageMatch = rawChildInput.match(/\d+/);
+      if (ageMatch) {
+        parsedChildAge = ageMatch[0]; // Извлекает строго цифры (например "4")
+      }
+
+      // 2. Имя очищаем от цифр и лишних знаков
+      const nameMatch = rawChildInput.split(/\d+/)[0];
+      parsedChildName = nameMatch.replace(/[,\-–—]/g, '').trim();
+
+      if (!parsedChildName) {
+        parsedChildName = rawChildInput;
       }
     }
 
-    // Форматируем дату строго как YYYY-MM-DD
+    const leadCity = city || 'Серпухов';
+
+    // Генерируем заметку с помощью Grok
+    const aiNote = await generateGrokNote(parent_name, parsedChildName, parsedChildAge, leadCity);
+
+    // Форматируем дату создания в формате YYYY-MM-DD
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const dateStr = `${year}-${month}-${day}`;
 
-    // Строго формируем порядок колонок от A до K:
+    // Формируем порядок колонок от A до K:
     const newRow = [
       leadId,             // A: ID Заявки (lead_id)
       parent_name,        // B: ФИО Родителя (parent_name)
       parsedChildName,    // C: Имя ребенка (child_name)
-      parsedChildAge,     // D: Возраст ребенка (child_age)
+      parsedChildAge,     // D: Возраст ребенка (только число, например '4')
       phone,              // E: Телефон (phone)
-      city || 'Серпухов', // F: Город (city)
+      leadCity,           // F: Город (city)
       '-',                // G: Telegram Никнейм (tg_username)
       'Новая',            // H: Статус заявки (status)
       '-',                // I: Дата 1-го занятия (first_lesson_date)
-      'Заявка с веб-сайта',// J: Заметки ИИ / Админа (notes)
-      dateStr             // K: Дата создания (created_at) -> 2026-08-03
+      aiNote,             // J: Заметки ИИ (от Grok)
+      dateStr             // K: Дата создания (created_at) -> YYYY-MM-DD
     ];
 
     await sheets.spreadsheets.values.append({
