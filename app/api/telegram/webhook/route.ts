@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
         const [, leadId, selectedDate] = callbackData.split(':');
         const googleScriptUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
-        // Отправляем запрос в Google Apps Script
+        // Отправляем запрос в Google Apps Script (ServerAPI.gs)
         if (googleScriptUrl) {
           try {
             await fetch(googleScriptUrl, {
@@ -123,8 +123,12 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Обновляем сообщение в Telegram
-        const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n📅 Дата: ${selectedDate}`;
+        // Форматируем красивую дату (например, 15.08.2026)
+        const [year, month, day] = selectedDate.split('-');
+        const formattedDisplayDate = `${day}.${month}.${year}`;
+
+        // Обновляем исходную карточку в топике "Новые заявки"
+        const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n📅 Дата: <b>${formattedDisplayDate}</b>`;
 
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
           method: 'POST',
@@ -134,14 +138,42 @@ export async function POST(req: NextRequest) {
             message_id: message.message_id,
             text: updatedText,
             parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [] } // Убираем календарь
+            reply_markup: { inline_keyboard: [] } // убираем календарь
           })
         });
+
+        // 3. ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ В ТОПИК "Записан на 1-е занятие"
+        const firstLessonTopicId = process.env.TELEGRAM_FIRST_LESSON_TOPIC_ID;
+
+        if (firstLessonTopicId) {
+          const topicMessage = `
+🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ!</b>
+
+🆔 <b>ID Лида:</b> <code>${leadId}</code>
+📅 <b>Дата занятия:</b> <code>${formattedDisplayDate}</code>
+
+📋 <b>Данные заявки:</b>
+${message.text}
+`.trim();
+
+          const topicPayload: Record<string, any> = {
+            chat_id: message.chat.id,
+            message_thread_id: Number(firstLessonTopicId),
+            text: topicMessage,
+            parse_mode: 'HTML',
+          };
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(topicPayload),
+          });
+        }
 
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: `Сохранено: ${selectedDate}` })
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: `Записано на ${formattedDisplayDate}` })
         });
       }
     }
