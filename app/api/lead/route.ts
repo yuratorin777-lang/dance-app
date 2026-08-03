@@ -1,74 +1,75 @@
 import { NextRequest, NextResponse } from 'next/server';
-import knowledgeBase from '@/data/knowledgebase.json';
+import { google } from 'googleapis';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const { messages } = await req.json();
+    const { parent_name, child_name, phone, city } = await req.json();
 
-    const apiKey = process.env.HF_TOKEN;
-    if (!apiKey) {
+    if (!parent_name || !phone) {
       return NextResponse.json(
-        { reply: "[Ошибка]: HF_TOKEN не найден в .env.local" },
-        { status: 200 }
+        { status: 'error', message: 'Имя и телефон обязательны' },
+        { status: 400 }
       );
     }
 
-    const systemPrompt = `
-Ты — вежливый и энергичный ИИ-Консультант школы танцев.
-Твоя задача — отвечать на вопросы родителя и мягко подводить его к записи на 1-е занятие.
+    // Подготовка сервисного аккаунта Google Sheets
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
 
-ОТВЕЧАЙ СТРОГО ПО БАЗЕ ЗНАНИЙ:
-${JSON.stringify(knowledgeBase, null, 2)}
+    if (!clientEmail || !privateKey || !spreadsheetId) {
+      console.error('Google Sheets env variables missing');
+      return NextResponse.json(
+        { status: 'error', message: 'Ошибка конфигурации сервера' },
+        { status: 500 }
+      );
+    }
 
-ПРАВИЛА:
-1. Отвечай кратко (2-3 предложения) и дружелюбно.
-2. Не придумывай того, чего нет в базе знаний.
-3. В конце ответа предлагай заполнить форму записи на этой странице.
-`;
-
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map((m: { role: string; content: string }) => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content
-      }))
-    ];
-
-    // Запрос к Hugging Face Inference API
-    const response = await fetch("https://api-inference.huggingface.co/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "Qwen/Qwen2.5-Coder-32B-Instruct",
-        messages: formattedMessages,
-        temperature: 0.3,
-        max_tokens: 500
-      })
+    const auth = new google.auth.JWT({
+      email: clientEmail,
+      key: privateKey,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      return NextResponse.json(
-        { reply: `[Ошибка HF API ${response.status}]: ${errText}` },
-        { status: 200 }
-      );
-    }
+    const sheets = google.sheets({ version: 'v4', auth });
 
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || "Извините, не удалось сформировать ответ.";
+    // Формируем новую строку для записи
+    const dateStr = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+    const newRow = [
+      dateStr,          // Дата и время
+      parent_name,      // Имя родителя
+      child_name || '', // Имя и возраст ребенка
+      phone,            // Телефон
+      city || 'Серпухов',// Город / Филиал
+      'Новая'           // Статус заявки
+    ];
 
-    return NextResponse.json({ reply });
+    // Добавляем запись во вкладку "leads" (или "Заявки")
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: 'leads!A:F', // или 'Заявки!A:F' в зависимости от имени вкладки
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [newRow],
+      },
+    });
+
+    // Ссылка на Telegram-бота с диплинком (передача имени или id)
+    const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || 'BabyDanceBot';
+    const tg_url = `https://t.me/${botUsername}?start=lead`;
+
+    return NextResponse.json({
+      status: 'success',
+      tg_url: tg_url
+    });
 
   } catch (error: any) {
-    console.error("Server Error:", error);
+    console.error('Error in lead API:', error);
     return NextResponse.json(
-      { reply: `[Ошибка сервера]: ${error.message}` },
-      { status: 200 }
+      { status: 'error', message: error.message || 'Ошибка сервера' },
+      { status: 500 }
     );
   }
 }
