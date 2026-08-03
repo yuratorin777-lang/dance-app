@@ -29,9 +29,16 @@ export default function Home() {
   const [formLoading, setFormLoading] = useState(false);
   const [tgUrl, setTgUrl] = useState<string | null>(null);
 
-  // Автоскролл чата при новых сообщениях
+  // Флаг для пропуска первого рендера (чтобы страница не подпрыгивала при загрузке)
+  const isInitialMount = useRef(true);
+
+  // Автоскролл чата ТОЛЬКО при новых сообщениях
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [messages, chatLoading]);
 
   // Отправка сообщения в чат
