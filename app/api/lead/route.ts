@@ -14,19 +14,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Подготовка сервисного аккаунта Google Sheets
+    // Чтение переменных окружения
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
 
     if (!clientEmail || !privateKey || !spreadsheetId) {
-      console.error('Google Sheets env variables missing');
+      console.error('Google Sheets env variables missing in dance-app');
       return NextResponse.json(
-        { status: 'error', message: 'Ошибка конфигурации сервера' },
+        { status: 'error', message: 'Ошибка конфигурации сервера (отсутствуют ключи Google)' },
         { status: 500 }
       );
     }
 
+    // Авторизация в Google Sheets API
     const auth = new google.auth.JWT({
       email: clientEmail,
       key: privateKey,
@@ -35,28 +36,27 @@ export async function POST(req: NextRequest) {
 
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Формируем новую строку для записи
+    // Формируем новую строку
     const dateStr = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
     const newRow = [
-      dateStr,          // Дата и время
-      parent_name,      // Имя родителя
-      child_name || '', // Имя и возраст ребенка
-      phone,            // Телефон
-      city || 'Серпухов',// Город / Филиал
-      'Новая'           // Статус заявки
+      dateStr,           // Дата и время
+      parent_name,       // Имя родителя
+      child_name || '',  // Имя и возраст ребенка
+      phone,             // Телефон
+      city || 'Серпухов', // Город / Филиал
+      'Новая'            // Статус заявки
     ];
 
-    // Добавляем запись во вкладку "leads" (или "Заявки")
+    // Запись во вкладку "leads"
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'leads!A:F', // или 'Заявки!A:F' в зависимости от имени вкладки
+      range: 'leads!A:F',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [newRow],
       },
     });
 
-    // Ссылка на Telegram-бота с диплинком (передача имени или id)
     const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || 'BabyDanceBot';
     const tg_url = `https://t.me/${botUsername}?start=lead`;
 
