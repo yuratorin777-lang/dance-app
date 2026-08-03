@@ -109,7 +109,7 @@ async function sendTelegramAdminNotification({
 }) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
-  const topicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1';
+  const rawTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1';
 
   if (!botToken || !chatId) {
     console.warn('Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID missing.');
@@ -132,17 +132,34 @@ async function sendTelegramAdminNotification({
 <i>${aiNote}</i>
 `.trim();
 
+  const payload: Record<string, any> = {
+    chat_id: chatId,
+    text: messageText,
+    parse_mode: 'HTML',
+  };
+
+  if (rawTopicId && !isNaN(Number(rawTopicId))) {
+    payload.message_thread_id = Number(rawTopicId);
+  }
+
   try {
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    let response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_thread_id: Number(topicId),
-        text: messageText,
-        parse_mode: 'HTML',
-      }),
+      body: JSON.stringify(payload),
     });
+
+    // Страховка: если с темой возникла ошибка 400 (например, неверный ID), слать в общий чат
+    if (!response.ok && payload.message_thread_id) {
+      console.warn('Failed to send to topic, fallback to main chat...');
+      delete payload.message_thread_id;
+
+      response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
 
     if (!response.ok) {
       const errorData = await response.text();
@@ -236,7 +253,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // 2. Отправляем карточку заявки в тему «Новые заявки» Telegram-группы
+    // 2. Отправляем карточку заявки в Telegram
     await sendTelegramAdminNotification({
       leadId,
       parentName: parent_name,
