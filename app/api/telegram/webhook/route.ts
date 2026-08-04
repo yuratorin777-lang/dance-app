@@ -269,7 +269,74 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // --- АДМИН / РОДИТЕЛЬ: Подтверждение выбора даты (Существующая логика) ---
+      // --- РОДИТЕЛЬ: Нажал на кнопку конкретной группы (ФИНАЛЬНАЯ ЗАПИСЬ) ---
+      if (callbackData.startsWith('confirm_group:')) {
+        const [, leadId, selectedDate, groupId] = callbackData.split(':');
+
+        // 1. Сохраняем дату и меняем статус в Google Таблице
+        if (googleScriptUrl) {
+          try {
+            await fetch(googleScriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'assign_first_lesson',
+                lead_id: leadId,
+                group_id: groupId,
+                first_lesson_date: selectedDate,
+              }),
+            });
+          } catch (err) {
+            console.error('Error calling Apps Script:', err);
+          }
+        }
+
+        const [year, month, day] = selectedDate.split('-');
+        const formattedDisplayDate = `${day}.${month}.${year}`;
+
+        // 2. Гасим спиннер на кнопке Telegram
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Вы успешно записаны!' })
+        });
+
+        // 3. Отправляем родителю сообщение с подтверждением
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: message.chat.id,
+            text: `🎉 <b>Поздравляем! Вы успешно записаны!</b>\n\n📅 Дата занятия: <b>${formattedDisplayDate}</b>\n\nЖдем вас в нашей студии!`,
+            parse_mode: 'HTML'
+          })
+        });
+
+        // 4. Отправляем уведомление в топик администраторам
+        const firstLessonTopicId = process.env.TELEGRAM_FIRST_LESSON_TOPIC_ID;
+        if (firstLessonTopicId) {
+          const topicMessage = `
+🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ! (Через Telegram Bot)</b>
+
+🆔 <b>ID Лида:</b> <code>${leadId}</code>
+🩰 <b>ID Группы:</b> <code>${groupId}</code>
+📅 <b>Дата занятия:</b> <code>${formattedDisplayDate}</code>
+`.trim();
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              message_thread_id: Number(firstLessonTopicId),
+              text: topicMessage,
+              parse_mode: 'HTML',
+            }),
+          });
+        }
+      }
+
+      // --- АДМИН: Выбор даты прямо из календаря ---
       if (callbackData.startsWith('pick_date:')) {
         const [, leadId, selectedDate] = callbackData.split(':');
 
