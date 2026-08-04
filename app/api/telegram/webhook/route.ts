@@ -2,7 +2,39 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-// Генерация сетки календаря
+// Вспомогательная функция для генерации ближайших 7 дней с указанием дня недели
+function generateUpcomingDays(leadId: string) {
+  const dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+  const keyboard: any[][] = [];
+
+  const today = new Date();
+  
+  // Генерируем кнопки на 7 дней вперед
+  for (let i = 1; i <= 7; i++) {
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() + i);
+
+    const year = nextDate.getFullYear();
+    const month = monthNames[nextDate.getMonth()];
+    const day = String(nextDate.getDate()).padStart(2, '0');
+    const dayOfWeek = dayNames[nextDate.getDay()];
+
+    const dateStr = `${year}-${month}-${day}`;
+    const buttonText = `${day}.${month} (${dayOfWeek})`;
+
+    keyboard.push([
+      {
+        text: buttonText,
+        callback_data: `pick_parent_date:${leadId}:${dateStr}:${dayOfWeek}`
+      }
+    ]);
+  }
+
+  return keyboard;
+}
+
+// Генерация сетки календаря для админа
 function generateCalendar(leadId: string, year: number, month: number) {
   const monthNames = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -62,12 +94,82 @@ function generateCalendar(leadId: string, year: number, month: number) {
 export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const googleScriptUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
+    // ==========================================
+    // 1. ОБРАБОТКА ВХОДЯЩИХ СООБЩЕНИЙ (/start LD-XXXX)
+    // ==========================================
+    if (update.message && update.message.text) {
+      const text = update.message.text.trim();
+      const chatId = update.message.chat.id;
+
+      if (text.startsWith('/start')) {
+        const parts = text.split(' ');
+        const startParam = parts[1] || ''; // Ожидаем ID Лида, например LD-1001
+
+        if (startParam.startsWith('LD-')) {
+          const leadId = startParam;
+          let parentName = 'Родитель';
+          let childName = 'ваш ребёнок';
+
+          // Запрашиваем информацию о лиде из Google Apps Script
+          if (googleScriptUrl) {
+            try {
+              const res = await fetch(googleScriptUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'get_lead_info',
+                  lead_id: leadId,
+                }),
+              });
+              const data = await res.json();
+              if (data.parentName) parentName = data.parentName;
+              if (data.childName) childName = data.childName;
+            } catch (err) {
+              console.error('Error fetching lead info:', err);
+            }
+          }
+
+          const greetingText = `Здравствуйте, <b>${parentName}</b>! Рады приветствовать вас и <b>${childName}</b> в студии Dance Kids! 🩰\n\nВыберите удобный день для первого пробного занятия:`;
+
+          const daysKeyboard = generateUpcomingDays(leadId);
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: greetingText,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: daysKeyboard }
+            })
+          });
+
+          return NextResponse.json({ ok: true });
+        } else {
+          // Обычный /start без реферального параметра
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: 'Здравствуйте! Для записи на занятие используйте персональную ссылку с нашего сайта.',
+            })
+          });
+          return NextResponse.json({ ok: true });
+        }
+      }
+    }
+
+    // ==========================================
+    // 2. ОБРАБОТКА НАЖАТИЙ НА КНОПКИ (CALLBACKS)
+    // ==========================================
     if (update.callback_query) {
       const callbackQuery = update.callback_query;
       const callbackData = callbackQuery.data || '';
       const message = callbackQuery.message;
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
       if (callbackData === 'ignore') {
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
@@ -78,7 +180,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // 1. Кликнули "Записать на урок" -> Показываем календарь
+      // --- АДМИН: Кликнули "Записать на урок" -> Показываем календарь ---
       if (callbackData.startsWith('assign_lesson:')) {
         const leadId = callbackData.split(':')[1];
         const now = new Date();
@@ -101,12 +203,76 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 2. Выбрали конкретную дату в календаре
+      // --- РОДИТЕЛЬ: Выбрал дату из списка ближайших дней ---
+      if (callbackData.startsWith('pick_parent_date:')) {
+        const [, leadId, selectedDate, dayOfWeek] = callbackData.split(':');
+
+        let availableGroups = [];
+
+        // Запрашиваем подходящие группы из таблицы через Apps Script
+        if (googleScriptUrl) {
+          try {
+            const res = await fetch(googleScriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'get_groups_by_date',
+                date: selectedDate,
+                day_of_week: dayOfWeek,
+                lead_id: leadId,
+              }),
+            });
+            const data = await res.json();
+            availableGroups = data.groups || [];
+          } catch (err) {
+            console.error('Error fetching groups from Apps Script:', err);
+          }
+        }
+
+        const [year, month, day] = selectedDate.split('-');
+        const formattedDisplayDate = `${day}.${month}.${year}`;
+
+        if (availableGroups.length === 0) {
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              text: `К сожалению, на ${formattedDisplayDate} (${dayOfWeek}) доступных групп нет. Попробуйте выбрать другой день!`,
+            })
+          });
+        } else {
+          // Формируем кнопки с группами
+          const groupButtons = availableGroups.map((g: { id: string; name: string; time: string }) => [
+            {
+              text: `🩰 ${g.name} — ${g.time}`,
+              callback_data: `confirm_group:${leadId}:${selectedDate}:${g.id}`
+            }
+          ]);
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              text: `Отлично! Выбрана дата: <b>${formattedDisplayDate}</b>.\n\nВыберите подходящее время и группу:`,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: groupButtons }
+            })
+          });
+        }
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
+      }
+
+      // --- АДМИН / РОДИТЕЛЬ: Подтверждение выбора даты (Существующая логика) ---
       if (callbackData.startsWith('pick_date:')) {
         const [, leadId, selectedDate] = callbackData.split(':');
-        const googleScriptUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
-        // Отправляем запрос в Google Apps Script (ServerAPI.gs)
         if (googleScriptUrl) {
           try {
             await fetch(googleScriptUrl, {
@@ -123,11 +289,9 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Форматируем красивую дату (например, 15.08.2026)
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
-        // Обновляем исходную карточку в топике "Новые заявки"
         const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n📅 Дата: <b>${formattedDisplayDate}</b>`;
 
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
@@ -138,11 +302,10 @@ export async function POST(req: NextRequest) {
             message_id: message.message_id,
             text: updatedText,
             parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [] } // убираем календарь
+            reply_markup: { inline_keyboard: [] }
           })
         });
 
-        // 3. ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ В ТОПИК "Записан на 1-е занятие"
         const firstLessonTopicId = process.env.TELEGRAM_FIRST_LESSON_TOPIC_ID;
 
         if (firstLessonTopicId) {
@@ -156,17 +319,15 @@ export async function POST(req: NextRequest) {
 ${message.text}
 `.trim();
 
-          const topicPayload: Record<string, any> = {
-            chat_id: message.chat.id,
-            message_thread_id: Number(firstLessonTopicId),
-            text: topicMessage,
-            parse_mode: 'HTML',
-          };
-
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(topicPayload),
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              message_thread_id: Number(firstLessonTopicId),
+              text: topicMessage,
+              parse_mode: 'HTML',
+            }),
           });
         }
 
