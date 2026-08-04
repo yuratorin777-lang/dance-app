@@ -303,7 +303,7 @@ export async function POST(req: NextRequest) {
       if (callbackData.startsWith('confirm_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
 
-        // 1. Сохраняем в Google Таблицу
+        // 1. Сохраняем в Google Таблицу (Apps Script сам обновит статус и отправит полную карточку во 2-й топик)
         if (googleScriptUrl) {
           try {
             await fetch(googleScriptUrl, {
@@ -330,7 +330,7 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Вы успешно записаны!' })
         });
 
-        // 2. Подтверждение родителю
+        // 2. Подтверждение родителю в личку
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -340,29 +340,6 @@ export async function POST(req: NextRequest) {
             parse_mode: 'HTML'
           })
         });
-
-        // 3. Отправляем карточку записи в рабочий чат, ТЕМА №3 («Записан на 1-е занятие»)
-        const targetChatId = adminChatId || message.chat.id;
-        if (targetChatId) {
-          const topicMessage = `
-🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ! (Родитель записался сам)</b>
-
-🆔 <b>ID Лида:</b> <code>${leadId}</code>
-🩰 <b>Группа ID:</b> <code>${groupId}</code>
-📅 <b>Дата занятия:</b> <code>${formattedDisplayDate}</code>
-`.trim();
-
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: targetChatId,
-              message_thread_id: Number(firstLessonTopicId), // Топик 3
-              text: topicMessage,
-              parse_mode: 'HTML',
-            }),
-          });
-        }
       }
 
       // --- АДМИН: Выбрал дату из встроенного календаря ---
