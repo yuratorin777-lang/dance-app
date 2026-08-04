@@ -106,14 +106,14 @@ async function sendTelegramAdminNotification({
   phone: string;
   city: string;
   aiNote: string;
-}) {
+}): Promise<number | null> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
   const rawTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1';
 
   if (!botToken || !chatId) {
     console.warn('Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID missing.');
-    return;
+    return null;
   }
 
   const ageText = childAge ? `${childAge} лет` : 'не указан';
@@ -171,12 +171,17 @@ async function sendTelegramAdminNotification({
       });
     }
 
-    if (!response.ok) {
+    if (response.ok) {
+      const responseData = await response.json();
+      return responseData.result?.message_id || null;
+    } else {
       const errorData = await response.text();
       console.error('Failed to send Telegram message:', errorData);
+      return null;
     }
   } catch (err) {
     console.error('Error sending Telegram admin notification:', err);
+    return null;
   }
 }
 
@@ -238,7 +243,18 @@ export async function POST(req: NextRequest) {
     const day = String(now.getDate()).padStart(2, '0');
     const dateStr = `${year}-${month}-${day}`;
 
-    // Формируем порядок колонок от A до K:
+    // 1. Сначала отправляем карточку в Telegram, чтобы получить message_id
+    const messageId = await sendTelegramAdminNotification({
+      leadId,
+      parentName: parent_name,
+      childName: parsedChildName,
+      childAge: parsedChildAge,
+      phone,
+      city: leadCity,
+      aiNote,
+    });
+
+    // 2. Формируем порядок колонок от A до L:
     const newRow = [
       leadId,             // A: ID Заявки (lead_id)
       parent_name,        // B: ФИО Родителя (parent_name)
@@ -247,31 +263,21 @@ export async function POST(req: NextRequest) {
       phone,              // E: Телефон (phone)
       leadCity,           // F: Город (city)
       '-',                // G: Telegram Никнейм (tg_username)
-      'Новая заявка',            // H: Статус заявки (status)
+      'Новая заявка',     // H: Статус заявки (status)
       '-',                // I: Дата 1-го занятия (first_lesson_date)
       aiNote,             // J: Заметки ИИ (от Grok)
-      dateStr             // K: Дата создания (created_at) -> YYYY-MM-DD
+      dateStr,            // K: Дата создания (created_at) -> YYYY-MM-DD
+      messageId || '-'    // L: ID сообщения Telegram (tg_message_id)
     ];
 
-    // 1. Сохраняем в Google Таблицу
+    // 3. Сохраняем в Google Таблицу (колонки A:L)
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'leads!A:K',
+      range: 'leads!A:L',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [newRow],
       },
-    });
-
-    // 2. Отправляем карточку заявки в Telegram
-    await sendTelegramAdminNotification({
-      leadId,
-      parentName: parent_name,
-      childName: parsedChildName,
-      childAge: parsedChildAge,
-      phone,
-      city: leadCity,
-      aiNote,
     });
 
     const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || 'BabyDanceBot';
