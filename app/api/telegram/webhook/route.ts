@@ -248,10 +248,13 @@ export async function POST(req: NextRequest) {
       // --- РОДИТЕЛЬ: Подтвердил выбор конкретной группы (ФИНАЛ) ---
       if (callbackData.startsWith('confirm_parent_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID; // ID группы/супергруппы
+
+        let leadDetails: any = null;
 
         if (googleScriptUrl) {
           try {
-            await fetch(googleScriptUrl, {
+            const res = await fetch(googleScriptUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -259,16 +262,80 @@ export async function POST(req: NextRequest) {
                 lead_id: leadId,
                 group_id: groupId,
                 first_lesson_date: selectedDate,
+                by_parent: true
               }),
             });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data.lead) {
+                leadDetails = data.lead;
+              }
+            }
           } catch (err) {
-            console.error('Error calling Apps Script:', err);
+            console.error('Error calling Apps Script in parent flow:', err);
           }
         }
 
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
+        // 1. Редактируем карточку в админском топике "Новые заявки" (убираем кнопки, меняем статус)
+        const targetChatId = leadDetails?.chat_id || adminChatId;
+        const cardMessageId = leadDetails?.tg_message_id;
+
+        if (targetChatId && cardMessageId) {
+          const updatedCardText = 
+            `🔥 <b>ЗАЯВКА ОБНОВЛЕНА!</b>\n\n` +
+            `🆔 <b>ID Заявки:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+            `✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n` +
+            `📅 <b>Дата:</b> <code>${formattedDisplayDate}</code>\n` +
+            `🩰 <b>Группа:</b> <code>${groupId}</code>\n` +
+            `✨ <i>Родитель записался сам через бота</i>`;
+
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: targetChatId,
+              message_id: cardMessageId,
+              text: updatedCardText,
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: [] }
+            })
+          }).catch(err => console.error('Error editing admin card:', err));
+        }
+
+        // 2. Отправляем уведомление во 2-й топик ("Записан на 1-е занятие", ID топика = firstLessonTopicId)
+        if (targetChatId) {
+          const topicMessageText = 
+            `🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ!</b> (Родитель записался сам)\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `📅 <b>Дата занятия:</b> <code>${formattedDisplayDate}</code>\n` +
+            `🩰 <b>ID Группы:</b> <code>${groupId}</code>\n\n` +
+            `📋 <b>Данные заявки:</b>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}`;
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: targetChatId,
+              message_thread_id: Number(firstLessonTopicId),
+              text: topicMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to first lesson topic:', err));
+        }
+
+        // 3. Отвечаем родителю в его личный чат
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -284,6 +351,8 @@ export async function POST(req: NextRequest) {
             parse_mode: 'HTML'
           })
         });
+
+        return NextResponse.json({ ok: true });
       }
 
       // ======================================================================
