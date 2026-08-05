@@ -395,10 +395,23 @@ export async function POST(req: NextRequest) {
       if (callbackData.startsWith('confirm_admin_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
 
-        // 1. Сохраняем в Google Таблицу через GAS
+        // 1. СРАЗУ сбрасываем кнопки у сообщения, чтобы блокировать повторные клики (защита от дублей)
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: message.chat.id,
+            message_id: message.message_id,
+            reply_markup: { inline_keyboard: [] }
+          })
+        });
+
+        let success = false;
+
+        // 2. Сохраняем в Google Таблицу через GAS с проверкой ответа
         if (googleScriptUrl) {
           try {
-            await fetch(googleScriptUrl, {
+            const res = await fetch(googleScriptUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -408,31 +421,40 @@ export async function POST(req: NextRequest) {
                 first_lesson_date: selectedDate,
               }),
             });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === 'success' || data.ok) {
+                success = true;
+              }
+            }
           } catch (err) {
-            console.error('Error calling Apps Script:', err);
+            console.error('Error calling Apps Script in admin flow:', err);
           }
+        } else {
+          success = true; // Для тестового режима без GAS
         }
 
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
-        // 2. Обновляем исходный пост в теме "Новые заявки"
-        const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ (Администратором)</b>\n📅 Дата: <b>${formattedDisplayDate}</b>\n🆔 Группа: <code>${groupId}</code>`;
+        if (success) {
+          // 3. Обновляем исходный пост в теме "Новые заявки"
+          const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ (Администратором)</b>\n📅 Дата: <b>${formattedDisplayDate}</b>\n🆔 Группа: <code>${groupId}</code>`;
 
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: message.chat.id,
-            message_id: message.message_id,
-            text: updatedText,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [] }
-          })
-        });
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              message_id: message.message_id,
+              text: updatedText,
+              parse_mode: 'HTML',
+            })
+          });
 
-        // 3. Отправляем карточку во 2-й топик («Записан на 1-е занятие»)
-        const topicMessage = `
+          // 4. Отправляем карточку во 2-й топик («Записан на 1-е занятие») СТРОГО 1 раз
+          const topicMessage = `
 🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ! (Записал админ)</b>
 
 🆔 <b>ID Лида:</b> <code>${leadId}</code>
@@ -443,28 +465,45 @@ export async function POST(req: NextRequest) {
 ${message.text}
 `.trim();
 
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: message.chat.id,
-            message_thread_id: Number(firstLessonTopicId),
-            text: topicMessage,
-            parse_mode: 'HTML',
-          }),
-        });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              message_thread_id: Number(firstLessonTopicId),
+              text: topicMessage,
+              parse_mode: 'HTML',
+            }),
+          });
 
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: `Записано на ${formattedDisplayDate}` })
-        });
-      }
-    }
+          await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              callback_query_id: callbackQuery.id,
+              text: `Записано на ${formattedDisplayDate}`
+            })
+          });
+        } else {
+          // Если запись в Таблицу не удалась
+          await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              callback_query_id: callbackQuery.id,
+              text: 'Ошибка при сохранении в Google Таблицу!',
+              show_alert: true
+            })
+          });
+        }
+
+        return NextResponse.json({ ok: true });
+      } // Закрываем if (callbackData.startsWith('confirm_admin_group:'))
+    } // Закрываем if (update.callback_query)
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     console.error('Error in Telegram Webhook:', error);
     return NextResponse.json({ ok: true });
   }
-}
+} // Закрываем export async function POST
