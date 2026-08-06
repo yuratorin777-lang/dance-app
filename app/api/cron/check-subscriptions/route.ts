@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+// Вспомогательная функция для форматирования даты в ДД.ММ.ГГГГ
+function formatDate(dateStr: string | Date): string {
+  if (!dateStr) return 'не указана';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return String(dateStr);
+
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+
+  return `${day}.${month}.${year}`;
+}
+
 export async function GET(req: NextRequest) {
   // Защита авторизации
   const authHeader = req.headers.get('authorization');
@@ -25,19 +38,38 @@ export async function GET(req: NextRequest) {
     for (const item of items) {
       const { studentName, balanceLessons, validUntil, parentTgId, groupChatId, paymentsTopicId, triggerReason } = item;
 
+      const formattedDate = formatDate(validUntil);
+
+      // Формируем упоминание родителя (если в колонке лежит username или телефон/ID)
+      let parentMention = '';
+      if (parentTgId) {
+        const rawTg = String(parentTgId).trim();
+        if (rawTg) {
+          // Если это username (содержит буквы) и не начинается с @
+          if (!rawTg.startsWith('@') && isNaN(Number(rawTg))) {
+            parentMention = `@${rawTg}`;
+          } else if (rawTg.startsWith('@')) {
+            parentMention = rawTg;
+          }
+        }
+      }
+
+      // Текст обращения в начале сообщения
+      const mentionHeader = parentMention ? `${parentMention}, обратите внимание!\n\n` : '';
+
       let text = '';
       if (triggerReason === 'balance_low') {
-        text = `⚠️ <b>Окончание абонемента!</b>\n\nУ ученика <b>${studentName}</b> осталось занятий: <b>${balanceLessons}</b>.\nПожалуйста, позаботьтесь о продлении.`;
+        text = `${mentionHeader}⚠️ <b>Окончание абонемента!</b>\n\nУ ученика <b>${studentName}</b> осталось занятий: <b>${balanceLessons}</b>.\nДействителен до: <b>${formattedDate}</b>\n\nПожалуйста, позаботьтесь о продлении. 💃🏻`;
       } else if (triggerReason === 'date_expiring') {
-        text = `⏳ <b>Срок действия абонемента подходит к концу!</b>\n\nУ ученика <b>${studentName}</b> абонемент действует до <b>${validUntil}</b>.`;
+        text = `${mentionHeader}⏳ <b>Срок действия абонемента поджимает!</b>\n\nУ ученика <b>${studentName}</b> абонемент действует до <b>${formattedDate}</b>.\nОстаток занятий: <b>${balanceLessons}</b>\n\nПожалуйста, продлите абонемент! 💃🏻`;
       } else if (triggerReason === 'expired') {
-        text = `🚫 <b>Абонемент истек!</b>\n\nСрок действия абонемента ученика <b>${studentName}</b> закончился.`;
+        text = `${mentionHeader}🚫 <b>Абонемент истек!</b>\n\nСрок действия абонемента ученика <b>${studentName}</b> закончился (<b>${formattedDate}</b>).`;
       }
 
       if (!text) continue;
 
-      // 1. Отправляем в ЛС родителю (если привязан Telegram ID)
-      if (parentTgId) {
+      // 1. Отправляем в ЛС родителю (если указан числовой Telegram ID)
+      if (parentTgId && !isNaN(Number(parentTgId))) {
         await sendTelegramMessage(botToken, parentTgId, text);
       }
 
