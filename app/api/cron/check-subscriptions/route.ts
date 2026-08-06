@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-// Вспомогательная функция для форматирования даты в ДД.ММ.ГГГГ
 function formatDate(dateStr: string | Date): string {
   if (!dateStr) return 'не указана';
   const date = new Date(dateStr);
@@ -16,7 +15,6 @@ function formatDate(dateStr: string | Date): string {
 }
 
 export async function GET(req: NextRequest) {
-  // Защита авторизации
   const authHeader = req.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -36,16 +34,15 @@ export async function GET(req: NextRequest) {
     let sentCount = 0;
 
     for (const item of items) {
-      const { studentName, balanceLessons, validUntil, parentTgId, groupChatId, paymentsTopicId, triggerReason } = item;
+      const { studentName, balanceLessons, validUntil, diffDays, parentTgId, groupChatId, paymentsTopicId, triggerReason } = item;
 
       const formattedDate = formatDate(validUntil);
 
-      // Формируем упоминание родителя (если в колонке лежит username или телефон/ID)
+      // Формируем упоминание родителя из Колонки F
       let parentMention = '';
       if (parentTgId) {
         const rawTg = String(parentTgId).trim();
         if (rawTg) {
-          // Если это username (содержит буквы) и не начинается с @
           if (!rawTg.startsWith('@') && isNaN(Number(rawTg))) {
             parentMention = `@${rawTg}`;
           } else if (rawTg.startsWith('@')) {
@@ -54,21 +51,33 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Текст обращения в начале сообщения
       const mentionHeader = parentMention ? `${parentMention}, обратите внимание!\n\n` : '';
 
       let text = '';
       if (triggerReason === 'balance_low') {
-        text = `${mentionHeader}⚠️ <b>Окончание абонемента!</b>\n\nУ ученика <b>${studentName}</b> осталось занятий: <b>${balanceLessons}</b>.\nДействителен до: <b>${formattedDate}</b>\n\nПожалуйста, позаботьтесь о продлении. 💃🏻`;
+        // ТОЛЬКО про остаток занятий
+        text = `${mentionHeader}⚠️ <b>Заканчиваются занятия по абонементу!</b>\n\n` +
+               `Ученик: <b>${studentName}</b>\n` +
+               `Остаток занятий: <b>${balanceLessons}</b>\n\n` +
+               `Пожалуйста, не забудьте своевременно оплатить следующий абонемент! 💃🏻`;
       } else if (triggerReason === 'date_expiring') {
-        text = `${mentionHeader}⏳ <b>Срок действия абонемента поджимает!</b>\n\nУ ученика <b>${studentName}</b> абонемент действует до <b>${formattedDate}</b>.\nОстаток занятий: <b>${balanceLessons}</b>\n\nПожалуйста, продлите абонемент! 💃🏻`;
+        // ТОЛЬКО про срок действия и сколько дней осталось
+        const daysText = diffDays === 0 ? 'сегодня' : `осталось дней: <b>${diffDays}</b>`;
+        text = `${mentionHeader}⏳ <b>Заканчивается срок действия абонемента!</b>\n\n` +
+               `Ученик: <b>${studentName}</b>\n` +
+               `Абонемент действует до: <b>${formattedDate}</b> (${daysText})\n\n` +
+               `Пожалуйста, продлите абонемент, чтобы зафиксировать место в группе! 💃🏻`;
       } else if (triggerReason === 'expired') {
-        text = `${mentionHeader}🚫 <b>Абонемент истек!</b>\n\nСрок действия абонемента ученика <b>${studentName}</b> закончился (<b>${formattedDate}</b>).`;
+        // ТОЛЬКО про то, что срок уже истёк
+        text = `${mentionHeader}🚫 <b>Срок действия абонемента истёк!</b>\n\n` +
+               `Ученик: <b>${studentName}</b>\n` +
+               `Дата окончания: <b>${formattedDate}</b>\n\n` +
+               `Для возобновления посещений, пожалуйста, произведите оплату или свяжитесь с администратором.`;
       }
 
       if (!text) continue;
 
-      // 1. Отправляем в ЛС родителю (если указан числовой Telegram ID)
+      // 1. Отправляем в ЛС родителю (только если в колонке F записан числовой ID, а не @username)
       if (parentTgId && !isNaN(Number(parentTgId))) {
         await sendTelegramMessage(botToken, parentTgId, text);
       }
