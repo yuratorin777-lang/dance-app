@@ -3,6 +3,37 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
+// 📌 HELPER: УНИВЕРСАЛЬНЫЙ ВЫЗОВ GOOGLE APPS SCRIPT (БЕЗ CORS И 302 ОШИБОК)
+// ============================================================================
+async function callAppsScript(url: string, payload: object) {
+  if (!url) return null;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
+    });
+    
+    if (!res.ok) {
+      console.error(`Apps Script returned status ${res.status}`);
+      return null;
+    }
+    
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error('Apps Script response is not JSON:', text);
+      return null;
+    }
+  } catch (err) {
+    console.error('Error calling Apps Script:', err);
+    return null;
+  }
+}
+
+// ============================================================================
 // 📌 SECTION 0: INFO MATERIALS CONFIG
 // ============================================================================
 const INFO_MATERIALS: Record<string, string> = {
@@ -66,21 +97,12 @@ async function generateUpcomingDays(
 
   let activeDays: string[] = [];
   if (googleScriptUrl) {
-    try {
-      const res = await fetch(googleScriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'get_available_days',
-          lead_id: leadId 
-        }),
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        activeDays = data;
-      }
-    } catch (err) {
-      console.error('Error fetching available days for city:', err);
+    const data = await callAppsScript(googleScriptUrl, {
+      action: 'get_available_days',
+      lead_id: leadId
+    });
+    if (Array.isArray(data)) {
+      activeDays = data;
     }
   }
 
@@ -139,34 +161,25 @@ export async function POST(req: NextRequest) {
         if (startParam.startsWith('LD-')) {
           const leadId = startParam;
 
-          // 🛠️ ПРАВКА №1: Сохраняем parent_chat_id в Google Таблицу (Колонка M)
           if (googleScriptUrl) {
-            fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'save_parent_chat_id',
-                lead_id: leadId,
-                chat_id: chatId
-              })
-            }).catch(err => console.error('Error saving parent chat_id:', err));
+            await callAppsScript(googleScriptUrl, {
+              action: 'save_parent_chat_id',
+              lead_id: leadId,
+              chat_id: chatId
+            });
           }
 
           let parentName = 'Родитель';
           let childName = 'ваш ребёнок';
 
           if (googleScriptUrl) {
-            try {
-              const res = await fetch(googleScriptUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'get_lead_info', lead_id: leadId }),
-              });
-              const data = await res.json();
+            const data = await callAppsScript(googleScriptUrl, {
+              action: 'get_lead_info',
+              lead_id: leadId
+            });
+            if (data) {
               if (data.parentName) parentName = data.parentName;
               if (data.childName) childName = data.childName;
-            } catch (err) {
-              console.error('Error fetching lead info:', err);
             }
           }
 
@@ -291,21 +304,14 @@ export async function POST(req: NextRequest) {
         let availableGroups = [];
 
         if (googleScriptUrl) {
-          try {
-            const res = await fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'get_groups_by_date',
-                date: selectedDate,
-                day_of_week: dayOfWeek,
-                lead_id: leadId,
-              }),
-            });
-            const data = await res.json();
-            availableGroups = data.groups || [];
-          } catch (err) {
-            console.error('Error fetching groups from Apps Script:', err);
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'get_groups_by_date',
+            date: selectedDate,
+            day_of_week: dayOfWeek,
+            lead_id: leadId,
+          });
+          if (data && data.groups) {
+            availableGroups = data.groups;
           }
         }
 
@@ -355,27 +361,15 @@ export async function POST(req: NextRequest) {
         let leadDetails: any = null;
 
         if (googleScriptUrl) {
-          try {
-            const res = await fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'assign_first_lesson',
-                lead_id: leadId,
-                group_id: groupId,
-                first_lesson_date: selectedDate,
-                by_parent: true
-              }),
-            });
-
-            if (res.ok) {
-              const data = await res.json();
-              if (data.lead) {
-                leadDetails = data.lead;
-              }
-            }
-          } catch (err) {
-            console.error('Error calling Apps Script in parent flow:', err);
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'assign_first_lesson',
+            lead_id: leadId,
+            group_id: groupId,
+            first_lesson_date: selectedDate,
+            by_parent: true
+          });
+          if (data && data.lead) {
+            leadDetails = data.lead;
           }
         }
 
@@ -411,7 +405,7 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error editing admin card:', err));
         }
 
-        if (targetChatId) {
+        if (adminChatId) {
           const topicMessageText = 
             `🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ!</b> (Родитель записался сам)\n\n` +
             `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
@@ -427,7 +421,7 @@ export async function POST(req: NextRequest) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: targetChatId,
+              chat_id: adminChatId,
               message_thread_id: Number(firstLessonTopicId),
               text: topicMessageText,
               parse_mode: 'HTML'
@@ -466,152 +460,131 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
-// 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS (ГОТОВЫЙ КОД)
-// ======================================================================
+      // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
+      // ======================================================================
 
-if (callbackData.startsWith('confirm_trial_yes:')) {
-  const leadId = callbackData.split(':')[1];
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+      if (callbackData.startsWith('confirm_trial_yes:')) {
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-  let leadDetails: any = null;
+        let leadDetails: any = null;
 
-  if (googleScriptUrl) {
-    try {
-      const res = await fetch(googleScriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'confirm_attendance', // Название action, которое есть в doPost
-          lead_id: leadId,
-          is_confirmed: true
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        leadDetails = data.lead;
+        if (googleScriptUrl) {
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'confirm_attendance',
+            lead_id: leadId,
+            is_confirmed: true
+          });
+          if (data && data.lead) {
+            leadDetails = data.lead;
+          }
+        }
+
+        if (adminChatId) {
+          const confirmMessageText = 
+            `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n` +
+            `🩰 <b>Группа:</b> ${leadDetails?.groupName || '—'}\n` +
+            `⏰ <b>Время:</b> ${leadDetails?.lessonTime || '—'}`;
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 74,
+              text: confirmMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to Topic 74:', err));
+        }
+
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
+            parse_mode: 'HTML',
+            reply_markup: getInfoMenuKeyboard()
+          })
+        });
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
+        });
+
+        return NextResponse.json({ ok: true });
       }
-    } catch (err) {
-      console.error('Error updating trial status to confirmed:', err);
-    }
-  }
 
-  // Отправка в Админский чат (Топик 74)
-  if (adminChatId) {
-    const confirmMessageText = 
-      `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
-      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-      `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-      `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-      `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-      `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n` +
-      `🩰 <b>Группа:</b> ${leadDetails?.groupName || '—'}\n` +
-      `⏰ <b>Время:</b> ${leadDetails?.lessonTime || '—'}`;
+      if (callbackData.startsWith('confirm_trial_no:')) {
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: adminChatId,
-        message_thread_id: 74,
-        text: confirmMessageText,
-        parse_mode: 'HTML'
-      })
-    }).catch(err => console.error('Error sending to Topic 74:', err));
-  }
+        let leadDetails: any = null;
 
-  // Ответ родителю в боте
-  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
-      parse_mode: 'HTML',
-      reply_markup: getInfoMenuKeyboard()
-    })
-  });
+        if (googleScriptUrl) {
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'confirm_attendance',
+            lead_id: leadId,
+            is_confirmed: false
+          });
+          if (data && data.lead) {
+            leadDetails = data.lead;
+          }
+        }
 
-  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
-  });
+        if (adminChatId) {
+          const alarmMessageText = 
+            `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+            `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
 
-  return NextResponse.json({ ok: true });
-}
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 6,
+              text: alarmMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to Topic 6:', err));
+        }
 
-if (callbackData.startsWith('confirm_trial_no:')) {
-  const leadId = callbackData.split(':')[1];
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+        const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
 
-  let leadDetails: any = null;
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: daysKeyboard }
+          })
+        });
 
-  if (googleScriptUrl) {
-    try {
-      const res = await fetch(googleScriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'confirm_attendance',
-          lead_id: leadId,
-          is_confirmed: false
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        leadDetails = data.lead;
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
+
+        return NextResponse.json({ ok: true });
       }
-    } catch (err) {
-      console.error('Error updating trial status to canceled:', err);
-    }
-  }
-
-  // Алярм в Админский чат (Топик 6)
-  if (adminChatId) {
-    const alarmMessageText = 
-      `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
-      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-      `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-      `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-      `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-      `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
-      `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
-
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: adminChatId,
-        message_thread_id: 6,
-        text: alarmMessageText,
-        parse_mode: 'HTML'
-      })
-    }).catch(err => console.error('Error sending to Topic 6:', err));
-  }
-
-  const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
-
-  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: daysKeyboard }
-    })
-  });
-
-  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackQuery.id })
-  });
-
-  return NextResponse.json({ ok: true });
-}
 
       // ======================================================================
       // 📌 SECTION 4: ADMIN WORKSPACE FLOW
@@ -657,21 +630,14 @@ if (callbackData.startsWith('confirm_trial_no:')) {
         let availableGroups = [];
 
         if (googleScriptUrl) {
-          try {
-            const res = await fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'get_groups_by_date',
-                date: selectedDate,
-                day_of_week: dayOfWeek,
-                lead_id: leadId,
-              }),
-            });
-            const data = await res.json();
-            availableGroups = data.groups || [];
-          } catch (err) {
-            console.error('Error fetching groups from Apps Script:', err);
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'get_groups_by_date',
+            date: selectedDate,
+            day_of_week: dayOfWeek,
+            lead_id: leadId,
+          });
+          if (data && data.groups) {
+            availableGroups = data.groups;
           }
         }
 
@@ -729,28 +695,15 @@ if (callbackData.startsWith('confirm_trial_no:')) {
 
         let success = false;
 
-        // 🛠️ ПРАВКА №2: Передаем запрос в Google Таблицу на смену статуса
         if (googleScriptUrl) {
-          try {
-            const res = await fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'assign_first_lesson',
-                lead_id: leadId,
-                group_id: groupId,
-                first_lesson_date: selectedDate,
-              }),
-            });
-
-            if (res.ok) {
-              const data = await res.json();
-              if (data.status === 'success' || data.ok) {
-                success = true;
-              }
-            }
-          } catch (err) {
-            console.error('Error calling Apps Script in admin flow:', err);
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'assign_first_lesson',
+            lead_id: leadId,
+            group_id: groupId,
+            first_lesson_date: selectedDate,
+          });
+          if (data && (data.status === 'success' || data.ok)) {
+            success = true;
           }
         } else {
           success = true;
