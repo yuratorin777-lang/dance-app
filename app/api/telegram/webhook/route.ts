@@ -466,145 +466,152 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
-      // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS (ПРАВКА №3)
       // ======================================================================
+// 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS (ПРАВКА №3)
+// ======================================================================
 
-      if (callbackData.startsWith('confirm_trial_yes:')) {
-        const leadId = callbackData.split(':')[1];
-        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+// ИСПОЛЬЗУЕМ ФОРМАТ: "confirm_LD-123" и "cancel_LD-123"
 
-        let leadDetails: any = null;
+if (callbackData.startsWith('confirm_')) {
+  // Проверяем, что это не другие "confirm_" действия (например, confirm_parent_group)
+  // Если leadId не содержит 'trial', можно добавить проверку, 
+  // но судя по вашему GAS, он просто сплитит по "_"
+  
+  const leadId = callbackData.split('_')[1]; 
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        if (googleScriptUrl) {
-          try {
-            const res = await fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'update_trial_status',
-                lead_id: leadId,
-                status: 'confirmed'
-              }),
-            });
-            const data = await res.json();
-            leadDetails = data.lead;
-          } catch (err) {
-            console.error('Error updating trial status to confirmed:', err);
-          }
-        }
+  let leadDetails: any = null;
 
-        if (adminChatId) {
-          const confirmMessageText = 
-            `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
-            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n` +
-            `🩰 <b>Группа:</b> ${leadDetails?.groupName || '—'}\n` +
-            `⏰ <b>Время:</b> ${leadDetails?.lessonTime || '—'}`;
+  if (googleScriptUrl) {
+    try {
+      const res = await fetch(googleScriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_trial_status',
+          lead_id: leadId,
+          status: 'confirmed'
+        }),
+      });
+      const data = await res.json();
+      leadDetails = data.lead;
+    } catch (err) {
+      console.error('Error updating trial status to confirmed:', err);
+    }
+  }
 
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: adminChatId,
-              message_thread_id: 74, // Топик 74
-              text: confirmMessageText,
-              parse_mode: 'HTML'
-            })
-          }).catch(err => console.error('Error sending to Topic 74:', err));
-        }
+  if (adminChatId) {
+    const confirmMessageText = 
+      `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
+      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+      `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+      `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+      `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+      `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n` +
+      `🩰 <b>Группа:</b> ${leadDetails?.groupName || '—'}\n` +
+      `⏰ <b>Время:</b> ${leadDetails?.lessonTime || '—'}`;
 
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
-            parse_mode: 'HTML',
-            reply_markup: getInfoMenuKeyboard()
-          })
-        });
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: adminChatId,
+        message_thread_id: 74,
+        text: confirmMessageText,
+        parse_mode: 'HTML'
+      })
+    }).catch(err => console.error('Error sending to Topic 74:', err));
+  }
 
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
-        });
+  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
+      parse_mode: 'HTML',
+      reply_markup: getInfoMenuKeyboard()
+    })
+  });
 
-        return NextResponse.json({ ok: true });
-      }
+  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
+  });
 
-      if (callbackData.startsWith('confirm_trial_no:')) {
-        const leadId = callbackData.split(':')[1];
-        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  return NextResponse.json({ ok: true });
+}
 
-        let leadDetails: any = null;
+if (callbackData.startsWith('cancel_')) {
+  const leadId = callbackData.split('_')[1];
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        if (googleScriptUrl) {
-          try {
-            const res = await fetch(googleScriptUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                action: 'update_trial_status',
-                lead_id: leadId,
-                status: 'canceled'
-              }),
-            });
-            const data = await res.json();
-            leadDetails = data.lead;
-          } catch (err) {
-            console.error('Error updating trial status to canceled:', err);
-          }
-        }
+  let leadDetails: any = null;
 
-        if (adminChatId) {
-          const alarmMessageText = 
-            `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
-            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
-            `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
+  if (googleScriptUrl) {
+    try {
+      const res = await fetch(googleScriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_trial_status',
+          lead_id: leadId,
+          status: 'canceled'
+        }),
+      });
+      const data = await res.json();
+      leadDetails = data.lead;
+    } catch (err) {
+      console.error('Error updating trial status to canceled:', err);
+    }
+  }
 
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: adminChatId,
-              message_thread_id: 6, // Топик 6
-              text: alarmMessageText,
-              parse_mode: 'HTML'
-            })
-          }).catch(err => console.error('Error sending to Topic 6:', err));
-        }
+  if (adminChatId) {
+    const alarmMessageText = 
+      `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
+      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+      `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+      `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+      `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+      `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+      `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
 
-        const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: adminChatId,
+        message_thread_id: 6,
+        text: alarmMessageText,
+        parse_mode: 'HTML'
+      })
+    }).catch(err => console.error('Error sending to Topic 6:', err));
+  }
 
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: daysKeyboard }
-          })
-        });
+  const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
 
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id })
-        });
+  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: daysKeyboard }
+    })
+  });
 
-        return NextResponse.json({ ok: true });
-      }
+  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQuery.id })
+  });
+
+  return NextResponse.json({ ok: true });
+}
 
       // ======================================================================
       // 📌 SECTION 4: ADMIN WORKSPACE FLOW
