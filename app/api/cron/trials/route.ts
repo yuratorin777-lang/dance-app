@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  // 1. Проверка авторизации Vercel Cron
   const authHeader = req.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -13,7 +12,7 @@ export async function GET(req: NextRequest) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
 
   try {
-    // 2. Запрашиваем из Google Apps Script список тех, у кого пробное СЕГОДНЯ
+    // 1. Запрашиваем из Google Apps Script список лидов с занятием на СЕГОДНЯ
     const res = await fetch(googleScriptUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -24,6 +23,7 @@ export async function GET(req: NextRequest) {
     let sentCount = 0;
 
     for (const item of items) {
+      // parentTgId должен соответствовать колонке с Telegram Chat ID в таблице!
       const { leadId, parentTgId, childName, lessonTime, branchAddress } = item;
 
       if (!parentTgId || isNaN(Number(parentTgId))) continue;
@@ -35,7 +35,6 @@ export async function GET(req: NextRequest) {
         `📍 **Адрес:** ${branchAddress || 'не указан'}\n\n` +
         `Подтвердите, пожалуйста, ваше присутствие:`;
 
-      // Inline-кнопки для подтверждения или отмены
       const keyboard = {
         inline_keyboard: [
           [{ text: '✅ Подтверждаю, будем', callback_data: `confirm_trial_yes:${leadId}` }],
@@ -43,9 +42,22 @@ export async function GET(req: NextRequest) {
         ]
       };
 
-      // 3. Отправляем в ЛС родителю
-      await sendTelegramMessage(botToken, parentTgId, messageText, keyboard);
-      sentCount++;
+      // 2. Отправляем сообщение и получаем message_id
+      const messageId = await sendTelegramMessage(botToken, parentTgId, messageText, keyboard);
+
+      // 3. Если сообщение отправлено, записываем tg_message_id в таблицу
+      if (messageId) {
+        await fetch(googleScriptUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'save_parent_message_id',
+            leadId: leadId,
+            messageId: messageId
+          }),
+        });
+        sentCount++;
+      }
     }
 
     return NextResponse.json({ success: true, processed: sentCount });
@@ -55,9 +67,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-async function sendTelegramMessage(token: string, chatId: string | number, text: string, replyMarkup?: any) {
+async function sendTelegramMessage(token: string, chatId: string | number, text: string, replyMarkup?: any): Promise<number | null> {
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -67,7 +79,10 @@ async function sendTelegramMessage(token: string, chatId: string | number, text:
         reply_markup: replyMarkup
       }),
     });
+    const data = await res.json();
+    return data.ok ? data.result.message_id : null;
   } catch (err) {
     console.error(`Failed to send TG message to ${chatId}:`, err);
+    return null;
   }
 }
