@@ -466,18 +466,11 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
-      // ======================================================================
-// 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS (ПРАВКА №3)
+// 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS (ГОТОВЫЙ КОД)
 // ======================================================================
 
-// ИСПОЛЬЗУЕМ ФОРМАТ: "confirm_LD-123" и "cancel_LD-123"
-
-if (callbackData.startsWith('confirm_')) {
-  // Проверяем, что это не другие "confirm_" действия (например, confirm_parent_group)
-  // Если leadId не содержит 'trial', можно добавить проверку, 
-  // но судя по вашему GAS, он просто сплитит по "_"
-  
-  const leadId = callbackData.split('_')[1]; 
+if (callbackData.startsWith('confirm_trial_yes:')) {
+  const leadId = callbackData.split(':')[1];
   const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
   let leadDetails: any = null;
@@ -488,18 +481,21 @@ if (callbackData.startsWith('confirm_')) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'update_trial_status',
+          action: 'confirm_attendance', // Название action, которое есть в doPost
           lead_id: leadId,
-          status: 'confirmed'
+          is_confirmed: true
         }),
       });
-      const data = await res.json();
-      leadDetails = data.lead;
+      if (res.ok) {
+        const data = await res.json();
+        leadDetails = data.lead;
+      }
     } catch (err) {
       console.error('Error updating trial status to confirmed:', err);
     }
   }
 
+  // Отправка в Админский чат (Топик 74)
   if (adminChatId) {
     const confirmMessageText = 
       `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
@@ -523,6 +519,7 @@ if (callbackData.startsWith('confirm_')) {
     }).catch(err => console.error('Error sending to Topic 74:', err));
   }
 
+  // Ответ родителю в боте
   await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -544,8 +541,8 @@ if (callbackData.startsWith('confirm_')) {
   return NextResponse.json({ ok: true });
 }
 
-if (callbackData.startsWith('cancel_')) {
-  const leadId = callbackData.split('_')[1];
+if (callbackData.startsWith('confirm_trial_no:')) {
+  const leadId = callbackData.split(':')[1];
   const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
   let leadDetails: any = null;
@@ -556,18 +553,21 @@ if (callbackData.startsWith('cancel_')) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'update_trial_status',
+          action: 'confirm_attendance',
           lead_id: leadId,
-          status: 'canceled'
+          is_confirmed: false
         }),
       });
-      const data = await res.json();
-      leadDetails = data.lead;
+      if (res.ok) {
+        const data = await res.json();
+        leadDetails = data.lead;
+      }
     } catch (err) {
       console.error('Error updating trial status to canceled:', err);
     }
   }
 
+  // Алярм в Админский чат (Топик 6)
   if (adminChatId) {
     const alarmMessageText = 
       `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
