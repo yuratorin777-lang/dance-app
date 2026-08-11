@@ -26,7 +26,7 @@ async function getGoogleSheetsInstance() {
     console.error('Google Sheets env variables missing in dance-app', {
       hasEmail: !!clientEmail,
       hasKey: !!privateKey,
-      hasSheetId: !!spreadsheetId
+      hasSheetId: !!spreadsheetId,
     });
     return null;
   }
@@ -43,7 +43,7 @@ async function getGoogleSheetsInstance() {
   return { sheets, spreadsheetId };
 }
 
-// Функция генерации заметок через Grok (xAI)
+// Функция генерации заметок через Grok (xAI) с защитным таймаутом
 async function generateGrokNote(parentName: string, childName: string, childAge: string, city: string): Promise<string> {
   const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
   
@@ -51,29 +51,35 @@ async function generateGrokNote(parentName: string, childName: string, childAge:
     return 'Заявка с веб-сайта';
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 сек таймаут, чтобы не вешать Vercel
+
   try {
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: 'grok-2-latest',
         messages: [
           {
             role: 'system',
-            content: 'Ты администратор детской танцевальной студии. Напиши очень короткую заметку для менеджера по новой заявке (1 предложение на русском языке): оцени возраст ребенка для занятий и дай рекомендацию по звонку.'
+            content: 'Ты администратор детской танцевальной студии. Напиши очень короткую заметку для менеджера по новой заявке (1 предложение на русском языке): оцени возраст ребенка для занятий и дай рекомендацию по звонку.',
           },
           {
             role: 'user',
-            content: `Родитель: ${parentName}, Ребенок: ${childName}, Возраст: ${childAge || 'не указан'}, Город: ${city}`
-          }
+            content: `Родитель: ${parentName}, Ребенок: ${childName}, Возраст: ${childAge || 'не указан'}, Город: ${city}`,
+          },
         ],
-        max_tokens: 50,
+        max_tokens: 60,
         temperature: 0.7,
       }),
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.error('Grok API error response:', await response.text());
@@ -84,7 +90,8 @@ async function generateGrokNote(parentName: string, childName: string, childAge:
     const note = data.choices?.[0]?.message?.content?.trim();
     return note || 'Заявка с веб-сайта';
   } catch (err) {
-    console.error('Error connecting to Grok API:', err);
+    clearTimeout(timeoutId);
+    console.error('Error or timeout connecting to Grok API:', err);
     return 'Заявка с веб-сайта';
   }
 }
@@ -187,7 +194,13 @@ async function sendTelegramAdminNotification({
 
 export async function POST(req: NextRequest) {
   try {
-    const { parent_name, child_name, phone, city } = await req.json();
+    const body = await req.json();
+
+    // Поддерживаем ключи как в snake_case, так и в camelCase
+    const parent_name = body.parent_name || body.parentName || '';
+    const child_name = body.child_name || body.childName || '';
+    const phone = body.phone || '';
+    const city = body.city || '';
 
     if (!parent_name || !phone) {
       return NextResponse.json(
@@ -199,7 +212,7 @@ export async function POST(req: NextRequest) {
     const instance = await getGoogleSheetsInstance();
     if (!instance) {
       return NextResponse.json(
-        { status: 'error', message: 'Ошибка конфигурации сервера' },
+        { status: 'error', message: 'Ошибка конфигурации сервера Google Sheets' },
         { status: 500 }
       );
     }
@@ -216,13 +229,11 @@ export async function POST(req: NextRequest) {
     let parsedChildAge = '';
 
     if (rawChildInput) {
-      // 1. Находим первую цифру в строке — это наш возраст
       const ageMatch = rawChildInput.match(/\d+/);
       if (ageMatch) {
-        parsedChildAge = ageMatch[0]; // Извлекает строго цифры (например "4")
+        parsedChildAge = ageMatch[0]; // Извлекает строго цифры
       }
 
-      // 2. Имя очищаем от цифр и лишних знаков
       const nameMatch = rawChildInput.split(/\d+/)[0];
       parsedChildName = nameMatch.replace(/[,\-–—]/g, '').trim();
 
@@ -236,14 +247,10 @@ export async function POST(req: NextRequest) {
     // Генерируем заметку с помощью Grok
     const aiNote = await generateGrokNote(parent_name, parsedChildName, parsedChildAge, leadCity);
 
-    // Форматируем дату создания в формате YYYY-MM-DD
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const dateStr = `${year}-${month}-${day}`;
+    // Дата создания по МСК (GMT+3)
+    const dateStr = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' }).format(new Date());
 
-    // 1. Сначала отправляем карточку в Telegram, чтобы получить message_id
+    // 1. Отправляем карточку в Telegram администраторам
     const messageId = await sendTelegramAdminNotification({
       leadId,
       parentName: parent_name,
@@ -254,38 +261,42 @@ export async function POST(req: NextRequest) {
       aiNote,
     });
 
-    // 2. Формируем порядок колонок от A до L:
+    // 2. Формируем порядок колонок от A до M (13 колонок):
     const newRow = [
       leadId,             // A: ID Заявки (lead_id)
       parent_name,        // B: ФИО Родителя (parent_name)
       parsedChildName,    // C: Имя ребенка (child_name)
-      parsedChildAge,     // D: Возраст ребенка (только число, например '4')
+      parsedChildAge,     // D: Возраст ребенка (только число)
       phone,              // E: Телефон (phone)
       leadCity,           // F: Город (city)
-      '-',                // G: Telegram Никнейм (tg_username)
+      body.tg_username || body.tgUsername || '-', // G: Telegram Никнейм
       'Новая заявка',     // H: Статус заявки (status)
       '-',                // I: Дата 1-го занятия (first_lesson_date)
       aiNote,             // J: Заметки ИИ (от Grok)
       dateStr,            // K: Дата создания (created_at) -> YYYY-MM-DD
-      messageId || '-'    // L: ID сообщения Telegram (tg_message_id)
+      messageId || '-',   // L: ID сообщения Telegram (tg_message_id)
+      body.parent_chat_id || '-' // M: Telegram Chat ID родителя (parent_chat_id)
     ];
 
-    // 3. Сохраняем в Google Таблицу (колонки A:L)
+    // 3. Сохраняем в Google Таблицу (колонки A:M)
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'leads!A:L',
+      range: 'leads!A:M',
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [newRow],
       },
     });
 
-    const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || 'BabyDanceBot';
+    const botUsername = process.env.NEXT_PUBLIC_TG_BOT_USERNAME || process.env.TELEGRAM_BOT_USERNAME || 'BabyDanceBot';
     const tg_url = `https://t.me/${botUsername}?start=${leadId}`;
 
     return NextResponse.json({
       status: 'success',
-      tg_url: tg_url
+      success: true,
+      lead_id: leadId,
+      tg_url: tg_url,
+      bot_link: tg_url,
     });
 
   } catch (error: any) {
