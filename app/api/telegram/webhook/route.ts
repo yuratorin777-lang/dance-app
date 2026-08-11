@@ -3,15 +3,66 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
+// 📌 SECTION 0: INFO MATERIALS CONFIG (быстрое редактирование текстов)
+// ============================================================================
+const INFO_MATERIALS: Record<string, string> = {
+  clothes: `👕 <b>Что надеть на первое занятие:</b>\n\n` +
+           `• Удобная спортивная одежда (легинсы/шорты, футболка)\n` +
+           `• Чешки или носочки (балетки, если есть)\n` +
+           `• Волосы аккуратно убраны в пучок или хвостик\n` +
+           `• Бутылочка питьевой воды без газа`,
+
+  location: `📍 <b>Как добраться:</b>\n\n` +
+            `Адрес нашей студии и подробную схему прохода с фото/видео вы можете уточнить у администратора или посмотреть на нашем сайте.\n\n` +
+            `<i>Приходите за 10–15 минут до начала занятия, чтобы успеть переодеться!</i>`,
+
+  prices: `💳 <b>Цены и условия:</b>\n\n` +
+          `• Первое пробное занятие — <b>БЕСПЛАТНО</b>\n` +
+          `• Абонемент на 8 занятий — от 3 500 ₽\n` +
+          `• Абонемент на 12 занятий — от 4 800 ₽\n\n` +
+          `<i>Подробный прайс-лист и скидки семейным картам уточняйте у администратора.</i>`,
+
+  links: `🔗 <b>Полезные ссылки и соцсети:</b>\n\n` +
+         `• Наш Telegram-канал: https://t.me/dancekids\n` +
+         `• Группа ВКонтакте: https://vk.com/dancekids\n` +
+         `• Отзывы родителей: https://vk.com/reviews`
+};
+
+/**
+ * Клавиатура Главного Информационного Меню
+ */
+function getInfoMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '👕 Что надеть?', callback_data: 'info_clothes' },
+        { text: '📍 Как добраться?', callback_data: 'info_location' }
+      ],
+      [
+        { text: '💳 Цены и условия', callback_data: 'info_prices' },
+        { text: '🔗 Соцсети и ссылки', callback_data: 'info_links' }
+      ]
+    ]
+  };
+}
+
+/**
+ * Кнопка возврата в Главное Меню
+ */
+function getBackToMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '⬅️ Назад в меню', callback_data: 'info_main_menu' }]
+    ]
+  };
+}
+
+// ============================================================================
 // 📌 SECTION 1: HELPER FUNCTIONS & KEYBOARD GENERATORS
 // ============================================================================
 
 /**
  * Генератор клавиатуры с доступными днями на 14 дней вперёд.
- * Фильтрует дни строго по активному расписанию конкретного города (из Лида).
- * @param leadId - ID лида (например, LD-1234)
- * @param googleScriptUrl - URL Google Apps Script
- * @param targetRole - 'parent' или 'admin' (определяет prefix для callback_data)
  */
 async function generateUpcomingDays(
   leadId: string, 
@@ -22,7 +73,6 @@ async function generateUpcomingDays(
   const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
   const keyboard: any[][] = [];
 
-  // 1. Запрашиваем активные дни недели ИМЕННО ДЛЯ ГОРОДА ЛИДА
   let activeDays: string[] = [];
   if (googleScriptUrl) {
     try {
@@ -45,7 +95,6 @@ async function generateUpcomingDays(
 
   const today = new Date();
   
-  // 2. Ищем ближайшие совпадения дат на 14 дней вперед
   for (let i = 1; i <= 14; i++) {
     const nextDate = new Date(today);
     nextDate.setDate(today.getDate() + i);
@@ -55,7 +104,6 @@ async function generateUpcomingDays(
     const day = String(nextDate.getDate()).padStart(2, '0');
     const dayOfWeek = dayNames[nextDate.getDay()];
 
-    // Показываем день, только если в этот день недели есть занятия в городе лида
     if (activeDays.length === 0 || activeDays.includes(dayOfWeek)) {
       const dateStr = `${year}-${month}-${day}`;
       const buttonText = `${day}.${month} (${dayOfWeek})`;
@@ -119,7 +167,6 @@ export async function POST(req: NextRequest) {
 
           const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
 
-          // Если в городе лида пока нет расписания
           if (daysKeyboard.length === 0) {
             await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
               method: 'POST',
@@ -179,10 +226,52 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
+      // 📌 SECTION 2.3: INFO MENU HANDLERS (ОБРАБОТКА ИНФО-КНОПОК)
+      // ======================================================================
+      if (callbackData.startsWith('info_')) {
+        const infoType = callbackData.replace('info_', '');
+
+        if (infoType === 'main_menu') {
+          // Возврат в Главное Меню
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              message_id: message.message_id,
+              text: 'ℹ️ <b>Главное меню информации:</b>\n\nВыберите интересующий вас раздел:',
+              parse_mode: 'HTML',
+              reply_markup: getInfoMenuKeyboard()
+            })
+          });
+        } else if (INFO_MATERIALS[infoType]) {
+          // Отправка текста инфо-блока с кнопкой "Назад"
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: message.chat.id,
+              message_id: message.message_id,
+              text: INFO_MATERIALS[infoType],
+              parse_mode: 'HTML',
+              reply_markup: getBackToMenuKeyboard()
+            })
+          });
+        }
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      // ======================================================================
       // 📌 SECTION 3: PARENT USER FLOW (CALLBACKS)
       // ======================================================================
 
-      // --- РОДИТЕЛЬ: Выбрал дату из умного списка ---
+      // --- РОДИТЕЛЬ: Выбрал дату ---
       if (callbackData.startsWith('pick_parent_date:')) {
         const [, leadId, selectedDate, dayOfWeek] = callbackData.split(':');
         let availableGroups = [];
@@ -248,7 +337,7 @@ export async function POST(req: NextRequest) {
       // --- РОДИТЕЛЬ: Подтвердил выбор конкретной группы (ФИНАЛ) ---
       if (callbackData.startsWith('confirm_parent_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
-        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID; // ID группы/супергруппы
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
         let leadDetails: any = null;
 
@@ -280,7 +369,7 @@ export async function POST(req: NextRequest) {
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
-        // 1. Редактируем карточку в админском топике "Новые заявки" (убираем кнопки, меняем статус)
+        // 1. Редактируем карточку в админском топике "Новые заявки"
         const targetChatId = leadDetails?.chat_id || adminChatId;
         const cardMessageId = leadDetails?.tg_message_id;
 
@@ -310,7 +399,7 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error editing admin card:', err));
         }
 
-        // 2. Отправляем уведомление во 2-й топик ("Записан на 1-е занятие", ID топика = firstLessonTopicId)
+        // 2. Отправляем уведомление во 2-й топик ("Записан на 1-е занятие")
         if (targetChatId) {
           const topicMessageText = 
             `🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ!</b> (Родитель записался сам)\n\n` +
@@ -335,7 +424,7 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error sending to first lesson topic:', err));
         }
 
-        // 3. Отвечаем родителю в его личный чат
+        // 3. Отвечаем родителю в его личный чат (Подтверждение)
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -352,6 +441,18 @@ export async function POST(req: NextRequest) {
           })
         });
 
+        // 4. 👋 ОТПРАВЛЯЕМ ИНФОРМАЦИОННОЕ МЕНЮ РОДИТЕЛЮ
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: message.chat.id,
+            text: 'ℹ️ <b>Полезная информация перед первым занятием:</b>\n\nВыберите интересующий вас раздел ниже:',
+            parse_mode: 'HTML',
+            reply_markup: getInfoMenuKeyboard()
+          })
+        });
+
         return NextResponse.json({ ok: true });
       }
 
@@ -359,11 +460,10 @@ export async function POST(req: NextRequest) {
       // 📌 SECTION 4: ADMIN WORKSPACE FLOW (GROUP TOPICS & ACTIONS)
       // ======================================================================
 
-      // --- АДМИН: Нажал "Записать на урок" под карточкой заявки ---
+      // --- АДМИН: Нажал "Записать на урок" ---
       if (callbackData.startsWith('assign_lesson:')) {
         const leadId = callbackData.split(':')[1];
         
-        // Получаем клавиатуру актуальных дней по ГОРОДУ ЛИДА
         const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'admin');
 
         if (daysKeyboard.length === 0) {
@@ -396,7 +496,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // --- АДМИН: Выбрал конкретную дату из актуального списка ---
+      // --- АДМИН: Выбрал дату ---
       if (callbackData.startsWith('pick_admin_date:')) {
         const [, leadId, selectedDate, dayOfWeek] = callbackData.split(':');
         let availableGroups = [];
@@ -434,7 +534,6 @@ export async function POST(req: NextRequest) {
             })
           });
         } else {
-          // Кнопки выбора конкретной группы для АДМИНА
           const groupButtons = availableGroups.map((g: { id: string; name: string; time: string }) => [
             {
               text: `🩰 ${g.name} — ${g.time}`,
@@ -460,11 +559,10 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // --- АДМИН: Подтвердил выбор группы (ФИНАЛ АДМИН-ЗАПИСИ) ---
+      // --- АДМИН: Подтвердил выбор группы ---
       if (callbackData.startsWith('confirm_admin_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
 
-        // 1. СРАЗУ сбрасываем кнопки у сообщения, чтобы блокировать повторные клики (защита от дублей)
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -477,7 +575,6 @@ export async function POST(req: NextRequest) {
 
         let success = false;
 
-        // 2. Сохраняем в Google Таблицу через GAS с проверкой ответа
         if (googleScriptUrl) {
           try {
             const res = await fetch(googleScriptUrl, {
@@ -501,14 +598,13 @@ export async function POST(req: NextRequest) {
             console.error('Error calling Apps Script in admin flow:', err);
           }
         } else {
-          success = true; // Для тестового режима без GAS
+          success = true;
         }
 
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
         if (success) {
-          // 3. Обновляем исходный пост в теме "Новые заявки"
           const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ (Администратором)</b>\n📅 Дата: <b>${formattedDisplayDate}</b>\n🆔 Группа: <code>${groupId}</code>`;
 
           await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
@@ -522,7 +618,6 @@ export async function POST(req: NextRequest) {
             })
           });
 
-          // 4. Отправляем карточку во 2-й топик («Записан на 1-е занятие») СТРОГО 1 раз
           const topicMessage = `
 🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ! (Записал админ)</b>
 
@@ -554,7 +649,6 @@ ${message.text}
             })
           });
         } else {
-          // Если запись в Таблицу не удалась
           await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -567,12 +661,12 @@ ${message.text}
         }
 
         return NextResponse.json({ ok: true });
-      } // Закрываем if (callbackData.startsWith('confirm_admin_group:'))
-    } // Закрываем if (update.callback_query)
+      }
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     console.error('Error in Telegram Webhook:', error);
     return NextResponse.json({ ok: true });
   }
-} // Закрываем export async function POST
+}
