@@ -84,7 +84,6 @@ async function generateUpcomingDays(
     }
   }
 
-  // Используем локальное время для избежания багов UTC на Vercel
   const today = new Date();
   
   for (let i = 1; i <= 14; i++) {
@@ -139,6 +138,20 @@ export async function POST(req: NextRequest) {
 
         if (startParam.startsWith('LD-')) {
           const leadId = startParam;
+
+          // 🛠️ ПРАВКА №1: Сохраняем parent_chat_id в Google Таблицу (Колонка M)
+          if (googleScriptUrl) {
+            fetch(googleScriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'save_parent_chat_id',
+                lead_id: leadId,
+                chat_id: chatId
+              })
+            }).catch(err => console.error('Error saving parent chat_id:', err));
+          }
+
           let parentName = 'Родитель';
           let childName = 'ваш ребёнок';
 
@@ -453,7 +466,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
-      // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
+      // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS (ПРАВКА №3)
       // ======================================================================
 
       if (callbackData.startsWith('confirm_trial_yes:')) {
@@ -496,7 +509,7 @@ export async function POST(req: NextRequest) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: adminChatId,
-              message_thread_id: 74,
+              message_thread_id: 74, // Топик 74
               text: confirmMessageText,
               parse_mode: 'HTML'
             })
@@ -563,7 +576,7 @@ export async function POST(req: NextRequest) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: adminChatId,
-              message_thread_id: 6,
+              message_thread_id: 6, // Топик 6
               text: alarmMessageText,
               parse_mode: 'HTML'
             })
@@ -709,6 +722,7 @@ export async function POST(req: NextRequest) {
 
         let success = false;
 
+        // 🛠️ ПРАВКА №2: Передаем запрос в Google Таблицу на смену статуса
         if (googleScriptUrl) {
           try {
             const res = await fetch(googleScriptUrl, {
