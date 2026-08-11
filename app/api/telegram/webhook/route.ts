@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
-// 📌 SECTION 0: INFO MATERIALS CONFIG (быстрое редактирование текстов)
+// 📌 SECTION 0: INFO MATERIALS CONFIG
 // ============================================================================
 const INFO_MATERIALS: Record<string, string> = {
   clothes: `👕 <b>Что надеть на первое занятие:</b>\n\n` +
@@ -28,9 +28,6 @@ const INFO_MATERIALS: Record<string, string> = {
          `• Отзывы родителей: https://vk.com/reviews`
 };
 
-/**
- * Клавиатура Главного Информационного Меню
- */
 function getInfoMenuKeyboard() {
   return {
     inline_keyboard: [
@@ -46,9 +43,6 @@ function getInfoMenuKeyboard() {
   };
 }
 
-/**
- * Кнопка возврата в Главное Меню
- */
 function getBackToMenuKeyboard() {
   return {
     inline_keyboard: [
@@ -61,9 +55,6 @@ function getBackToMenuKeyboard() {
 // 📌 SECTION 1: HELPER FUNCTIONS & KEYBOARD GENERATORS
 // ============================================================================
 
-/**
- * Генератор клавиатуры с доступными днями на 14 дней вперёд.
- */
 async function generateUpcomingDays(
   leadId: string, 
   googleScriptUrl: string, 
@@ -93,6 +84,7 @@ async function generateUpcomingDays(
     }
   }
 
+  // Используем локальное время для избежания багов UTC на Vercel
   const today = new Date();
   
   for (let i = 1; i <= 14; i++) {
@@ -216,6 +208,18 @@ export async function POST(req: NextRequest) {
       const callbackData = callbackQuery.data || '';
       const message = callbackQuery.message;
 
+      if (!message) {
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const chatId = message.chat.id;
+      const messageId = message.message_id;
+
       if (callbackData === 'ignore') {
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
@@ -226,32 +230,30 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
-      // 📌 SECTION 2.3: INFO MENU HANDLERS (ОБРАБОТКА ИНФО-КНОПОК)
+      // 📌 SECTION 2.3: INFO MENU HANDLERS
       // ======================================================================
       if (callbackData.startsWith('info_')) {
         const infoType = callbackData.replace('info_', '');
 
         if (infoType === 'main_menu') {
-          // Возврат в Главное Меню
           await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
-              message_id: message.message_id,
+              chat_id: chatId,
+              message_id: messageId,
               text: 'ℹ️ <b>Главное меню информации:</b>\n\nВыберите интересующий вас раздел:',
               parse_mode: 'HTML',
               reply_markup: getInfoMenuKeyboard()
             })
           });
         } else if (INFO_MATERIALS[infoType]) {
-          // Отправка текста инфо-блока с кнопкой "Назад"
           await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
-              message_id: message.message_id,
+              chat_id: chatId,
+              message_id: messageId,
               text: INFO_MATERIALS[infoType],
               parse_mode: 'HTML',
               reply_markup: getBackToMenuKeyboard()
@@ -271,7 +273,6 @@ export async function POST(req: NextRequest) {
       // 📌 SECTION 3: PARENT USER FLOW (CALLBACKS)
       // ======================================================================
 
-      // --- РОДИТЕЛЬ: Выбрал дату ---
       if (callbackData.startsWith('pick_parent_date:')) {
         const [, leadId, selectedDate, dayOfWeek] = callbackData.split(':');
         let availableGroups = [];
@@ -303,7 +304,7 @@ export async function POST(req: NextRequest) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
+              chat_id: chatId,
               text: `К сожалению, на ${formattedDisplayDate} (${dayOfWeek}) доступных групп нет. Попробуйте выбрать другой день!`,
             })
           });
@@ -319,7 +320,7 @@ export async function POST(req: NextRequest) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
+              chat_id: chatId,
               text: `Отлично! Выбрана дата: <b>${formattedDisplayDate}</b>.\n\nВыберите подходящее время и группу:`,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: groupButtons }
@@ -334,7 +335,6 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // --- РОДИТЕЛЬ: Подтвердил выбор конкретной группы (ФИНАЛ) ---
       if (callbackData.startsWith('confirm_parent_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
         const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -369,7 +369,6 @@ export async function POST(req: NextRequest) {
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
-        // 1. Редактируем карточку в админском топике "Новые заявки"
         const targetChatId = leadDetails?.chat_id || adminChatId;
         const cardMessageId = leadDetails?.tg_message_id;
 
@@ -399,7 +398,6 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error editing admin card:', err));
         }
 
-        // 2. Отправляем уведомление во 2-й топик ("Записан на 1-е занятие")
         if (targetChatId) {
           const topicMessageText = 
             `🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ!</b> (Родитель записался сам)\n\n` +
@@ -424,7 +422,6 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error sending to first lesson topic:', err));
         }
 
-        // 3. Отвечаем родителю в его личный чат (Подтверждение)
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -435,18 +432,17 @@ export async function POST(req: NextRequest) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: message.chat.id,
+            chat_id: chatId,
             text: `🎉 <b>Поздравляем! Вы успешно записаны!</b>\n\n📅 Дата занятия: <b>${formattedDisplayDate}</b>\n\nЖдем вас в нашей студии!`,
             parse_mode: 'HTML'
           })
         });
 
-        // 4. 👋 ОТПРАВЛЯЕМ ИНФОРМАЦИОННОЕ МЕНЮ РОДИТЕЛЮ
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: message.chat.id,
+            chat_id: chatId,
             text: 'ℹ️ <b>Полезная информация перед первым занятием:</b>\n\nВыберите интересующий вас раздел ниже:',
             parse_mode: 'HTML',
             reply_markup: getInfoMenuKeyboard()
@@ -457,10 +453,150 @@ export async function POST(req: NextRequest) {
       }
 
       // ======================================================================
-      // 📌 SECTION 4: ADMIN WORKSPACE FLOW (GROUP TOPICS & ACTIONS)
+      // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
       // ======================================================================
 
-      // --- АДМИН: Нажал "Записать на урок" ---
+      if (callbackData.startsWith('confirm_trial_yes:')) {
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+
+        let leadDetails: any = null;
+
+        if (googleScriptUrl) {
+          try {
+            const res = await fetch(googleScriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'update_trial_status',
+                lead_id: leadId,
+                status: 'confirmed'
+              }),
+            });
+            const data = await res.json();
+            leadDetails = data.lead;
+          } catch (err) {
+            console.error('Error updating trial status to confirmed:', err);
+          }
+        }
+
+        if (adminChatId) {
+          const confirmMessageText = 
+            `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n` +
+            `🩰 <b>Группа:</b> ${leadDetails?.groupName || '—'}\n` +
+            `⏰ <b>Время:</b> ${leadDetails?.lessonTime || '—'}`;
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 74,
+              text: confirmMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to Topic 74:', err));
+        }
+
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
+            parse_mode: 'HTML',
+            reply_markup: getInfoMenuKeyboard()
+          })
+        });
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
+        });
+
+        return NextResponse.json({ ok: true });
+      }
+
+      if (callbackData.startsWith('confirm_trial_no:')) {
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+
+        let leadDetails: any = null;
+
+        if (googleScriptUrl) {
+          try {
+            const res = await fetch(googleScriptUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'update_trial_status',
+                lead_id: leadId,
+                status: 'canceled'
+              }),
+            });
+            const data = await res.json();
+            leadDetails = data.lead;
+          } catch (err) {
+            console.error('Error updating trial status to canceled:', err);
+          }
+        }
+
+        if (adminChatId) {
+          const alarmMessageText = 
+            `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+            `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 6,
+              text: alarmMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to Topic 6:', err));
+        }
+
+        const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
+
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: daysKeyboard }
+          })
+        });
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
+
+        return NextResponse.json({ ok: true });
+      }
+
+      // ======================================================================
+      // 📌 SECTION 4: ADMIN WORKSPACE FLOW
+      // ======================================================================
+
       if (callbackData.startsWith('assign_lesson:')) {
         const leadId = callbackData.split(':')[1];
         
@@ -483,8 +619,8 @@ export async function POST(req: NextRequest) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: message.chat.id,
-            message_id: message.message_id,
+            chat_id: chatId,
+            message_id: messageId,
             reply_markup: { inline_keyboard: daysKeyboard }
           })
         });
@@ -496,7 +632,6 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // --- АДМИН: Выбрал дату ---
       if (callbackData.startsWith('pick_admin_date:')) {
         const [, leadId, selectedDate, dayOfWeek] = callbackData.split(':');
         let availableGroups = [];
@@ -545,8 +680,8 @@ export async function POST(req: NextRequest) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
-              message_id: message.message_id,
+              chat_id: chatId,
+              message_id: messageId,
               reply_markup: { inline_keyboard: groupButtons }
             })
           });
@@ -559,7 +694,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // --- АДМИН: Подтвердил выбор группы ---
       if (callbackData.startsWith('confirm_admin_group:')) {
         const [, leadId, selectedDate, groupId] = callbackData.split(':');
 
@@ -567,8 +701,8 @@ export async function POST(req: NextRequest) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: message.chat.id,
-            message_id: message.message_id,
+            chat_id: chatId,
+            message_id: messageId,
             reply_markup: { inline_keyboard: [] }
           })
         });
@@ -604,15 +738,17 @@ export async function POST(req: NextRequest) {
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
+        const messageText = ('text' in message) ? message.text || '' : '';
+
         if (success) {
-          const updatedText = `${message.text}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ (Администратором)</b>\n📅 Дата: <b>${formattedDisplayDate}</b>\n🆔 Группа: <code>${groupId}</code>`;
+          const updatedText = `${messageText}\n\n✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ (Администратором)</b>\n📅 Дата: <b>${formattedDisplayDate}</b>\n🆔 Группа: <code>${groupId}</code>`;
 
           await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
-              message_id: message.message_id,
+              chat_id: chatId,
+              message_id: messageId,
               text: updatedText,
               parse_mode: 'HTML',
             })
@@ -626,14 +762,14 @@ export async function POST(req: NextRequest) {
 🩰 <b>ID Группы:</b> <code>${groupId}</code>
 
 📋 <b>Данные заявки:</b>
-${message.text}
+${messageText}
 `.trim();
 
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: message.chat.id,
+              chat_id: chatId,
               message_thread_id: Number(firstLessonTopicId),
               text: topicMessage,
               parse_mode: 'HTML',
@@ -654,19 +790,17 @@ ${message.text}
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               callback_query_id: callbackQuery.id,
-              text: 'Ошибка при сохранении в Google Таблицу!',
+              text: 'Ошибка при сохранении данных!',
               show_alert: true
             })
           });
         }
-
-        return NextResponse.json({ ok: true });
       }
     }
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    console.error('Error in Telegram Webhook:', error);
-    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error('Webhook Handler Error:', error);
+    return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });
   }
 }
