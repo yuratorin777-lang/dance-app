@@ -391,7 +391,7 @@ export async function POST(req: NextRequest) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: targetChatId,
-              message_id: cardMessageId,
+              message_id: Number(cardMessageId),
               text: updatedCardText,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [] }
