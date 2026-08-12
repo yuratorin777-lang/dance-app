@@ -370,6 +370,7 @@ export async function POST(req: NextRequest) {
         const [year, month, day] = selectedDate.split('-');
         const formattedDisplayDate = `${day}.${month}.${year}`;
 
+        // 1. РЕДАКТИРУЕМ ИСХОДНУЮ КАРТОЧКУ В ТОПИКЕ "НОВЫЕ ЗАЯВКИ" (Убираем кнопку "Назначить")
         const targetChatId = leadDetails?.chat_id || adminChatId;
         const cardMessageId = leadDetails?.tg_message_id;
         const leadsTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1'; // Топик "Новые заявки"
@@ -393,14 +394,15 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               chat_id: targetChatId,
               message_id: Number(cardMessageId),
-              message_thread_id: Number(leadsTopicId), // 👈 Добавили ID топика
+              message_thread_id: Number(leadsTopicId),
               text: updatedCardText,
               parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [] }
+              reply_markup: { inline_keyboard: [] } // 👈 Удаляет кнопку!
             })
-          }).catch(err => console.error('Error editing admin card:', err));
+          }).catch(err => console.error('Error editing original admin card:', err));
         }
 
+        // 2. ОТПРАВЛЯЕМ НОВОЕ УВЕДОМЛЕНИЕ В ТОПИК 1-ГО ЗАНЯТИЯ
         if (adminChatId) {
           const topicMessageText = 
             `🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ!</b> (Родитель записался сам)\n\n` +
@@ -425,6 +427,7 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error sending to first lesson topic:', err));
         }
 
+        // 3. ОТВЕЧАЕМ РОДИТЕЛЮ И ПОКАЗЫВАЕМ МЕНЮ
         await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
