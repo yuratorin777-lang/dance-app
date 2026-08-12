@@ -372,6 +372,7 @@ export async function POST(req: NextRequest) {
 
         const targetChatId = leadDetails?.chat_id || adminChatId;
         const cardMessageId = leadDetails?.tg_message_id;
+        const leadsTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1'; // Топик "Новые заявки"
 
         if (targetChatId && cardMessageId) {
           const updatedCardText = 
@@ -392,6 +393,7 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               chat_id: targetChatId,
               message_id: Number(cardMessageId),
+              message_thread_id: Number(leadsTopicId), // 👈 Добавили ID топика
               text: updatedCardText,
               parse_mode: 'HTML',
               reply_markup: { inline_keyboard: [] }
