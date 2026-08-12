@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
-// 📌 HELPER: УНИВЕРСАЛЬНЫЙ ВЫЗОВ GOOGLE APPS SCRIPT (БЕЗ CORS И 302 ОШИБОК)
+// 📌 HELPER: УНИВЕРСАЛЬНЫЙ ВЫЗОВ GOOGLE APPS SCRIPT
 // ============================================================================
 async function callAppsScript(url: string, payload: object) {
   if (!url) return null;
@@ -38,10 +38,10 @@ async function callAppsScript(url: string, payload: object) {
 // ============================================================================
 const INFO_MATERIALS: Record<string, string> = {
   clothes: `👕 <b>Что надеть на первое занятие:</b>\n\n` +
-           `• Удобная спортивная одежда (легинсы/шорты, футболка)\n` +
-           `• Чешки или носочки (балетки, если есть)\n` +
-           `• Волосы аккуратно убраны в пучок или хвостик\n` +
-           `• Бутылочка питьевой воды без газа`,
+            `• Удобная спортивная одежда (легинсы/шорты, футболка)\n` +
+            `• Чешки или носочки (балетки, если есть)\n` +
+            `• Волосы аккуратно убраны в пучок или хвостик\n` +
+            `• Бутылочка питьевой воды без газа`,
 
   location: `📍 <b>Как добраться:</b>\n\n` +
             `Адрес нашей студии и подробную схему прохода с фото/видео вы можете уточнить у администратора или посмотреть на нашем сайте.\n\n` +
@@ -85,7 +85,6 @@ function getBackToMenuKeyboard() {
 // ============================================================================
 // 📌 SECTION 1: HELPER FUNCTIONS & KEYBOARD GENERATORS
 // ============================================================================
-
 async function generateUpcomingDays(
   leadId: string, 
   googleScriptUrl: string, 
@@ -139,7 +138,6 @@ async function generateUpcomingDays(
 // ============================================================================
 // 📌 SECTION 2: MAIN WEBHOOK HANDLER
 // ============================================================================
-
 export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
@@ -255,9 +253,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ======================================================================
       // 📌 SECTION 2.3: INFO MENU HANDLERS
-      // ======================================================================
       if (callbackData.startsWith('info_')) {
         const infoType = callbackData.replace('info_', '');
 
@@ -295,10 +291,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ======================================================================
       // 📌 SECTION 3: PARENT USER FLOW (CALLBACKS)
-      // ======================================================================
-
       if (callbackData.startsWith('pick_parent_date:')) {
         const [, leadId, selectedDate, dayOfWeek] = callbackData.split(':');
         let availableGroups = [];
@@ -352,6 +345,7 @@ export async function POST(req: NextRequest) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ callback_query_id: callbackQuery.id })
         });
+        return NextResponse.json({ ok: true });
       }
 
       if (callbackData.startsWith('confirm_parent_group:')) {
@@ -459,10 +453,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ======================================================================
       // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
-      // ======================================================================
-
       if (callbackData.startsWith('confirm_trial_yes:')) {
         const leadId = callbackData.split(':')[1];
         const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -586,10 +577,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ======================================================================
       // 📌 SECTION 4: ADMIN WORKSPACE FLOW
-      // ======================================================================
-
       if (callbackData.startsWith('assign_lesson:')) {
         const leadId = callbackData.split(':')[1];
         
@@ -623,6 +611,7 @@ export async function POST(req: NextRequest) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Выберите дату для лида' })
         });
+        return NextResponse.json({ ok: true });
       }
 
       if (callbackData.startsWith('pick_admin_date:')) {
@@ -678,6 +667,7 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({ callback_query_id: callbackQuery.id, text: `Дата ${formattedDisplayDate}. Выберите группу:` })
           });
         }
+        return NextResponse.json({ ok: true });
       }
 
       if (callbackData.startsWith('confirm_admin_group:')) {
@@ -694,6 +684,7 @@ export async function POST(req: NextRequest) {
         });
 
         let success = false;
+        let leadDetails: any = null;
 
         if (googleScriptUrl) {
           const data = await callAppsScript(googleScriptUrl, {
@@ -701,9 +692,11 @@ export async function POST(req: NextRequest) {
             lead_id: leadId,
             group_id: groupId,
             first_lesson_date: selectedDate,
+            by_parent: false
           });
           if (data && (data.status === 'success' || data.ok)) {
             success = true;
+            leadDetails = data.lead;
           }
         } else {
           success = true;
@@ -728,27 +721,30 @@ export async function POST(req: NextRequest) {
             })
           });
 
-          const topicMessage = `
-🎉 <b>НОВАЯ ЗАПИСЬ НА 1-Е ЗАНЯТИЕ! (Записал админ)</b>
+          const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+          if (adminChatId) {
+            const topicMessageText = 
+              `🎉 <b>ЗАПИСЬ НА 1-Е ЗАНЯТИЕ (Записал админ)</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              `📅 <b>Дата занятия:</b> <code>${formattedDisplayDate}</code>\n` +
+              `🩰 <b>Группа:</b> <code>${groupId}</code>\n\n` +
+              `📋 <b>Данные заявки:</b>\n` +
+              `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+              `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+              `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+              `🏙 <b>Город:</b> ${leadDetails?.city || '—'}`;
 
-🆔 <b>ID Лида:</b> <code>${leadId}</code>
-📅 <b>Дата занятия:</b> <code>${formattedDisplayDate}</code>
-🩰 <b>ID Группы:</b> <code>${groupId}</code>
-
-📋 <b>Данные заявки:</b>
-${messageText}
-`.trim();
-
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              message_thread_id: Number(firstLessonTopicId),
-              text: topicMessage,
-              parse_mode: 'HTML',
-            }),
-          });
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: adminChatId,
+                message_thread_id: Number(firstLessonTopicId),
+                text: topicMessageText,
+                parse_mode: 'HTML'
+              })
+            }).catch(err => console.error('Error sending to first lesson topic:', err));
+          }
 
           await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
             method: 'POST',
@@ -764,11 +760,12 @@ ${messageText}
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               callback_query_id: callbackQuery.id,
-              text: 'Ошибка при сохранении данных!',
+              text: 'Ошибка при сохранении данных в таблицу!',
               show_alert: true
             })
           });
         }
+        return NextResponse.json({ ok: true });
       }
     }
 
