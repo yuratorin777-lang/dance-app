@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
 
         if (targetChatId && cardMessageId) {
           const updatedCardText = 
-            `🔥 <b>ЗАЯВКА ОБНОВЛЕНА!</b>\n\n` +
+            `🔥 <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n\n` +
             `🆔 <b>ID Заявки:</b> <code>${leadId}</code>\n` +
             `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
             `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
