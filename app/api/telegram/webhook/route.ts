@@ -483,17 +483,26 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // Извлекаем поля безопасно из camelCase и snake_case
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || '—';
+        const childName = leadDetails?.childName || leadDetails?.child_name || '—';
+        const phone = leadDetails?.phone || '—';
+        const city = leadDetails?.city || '—';
+        const groupName = leadDetails?.groupName || leadDetails?.group_name || '—';
+        const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || '—';
+
         if (adminChatId) {
           const confirmMessageText = 
             `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
             `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n` +
-            `🩰 <b>Группа:</b> ${leadDetails?.groupName || '—'}\n` +
-            `⏰ <b>Время:</b> ${leadDetails?.lessonTime || '—'}`;
+            `👤 <b>Родитель:</b> ${parentName}\n` +
+            `👶 <b>Ребенок:</b> ${childName}\n` +
+            `📞 <b>Телефон:</b> ${phone}\n` +
+            `🏙 <b>Город:</b> ${city}\n` +
+            `🩰 <b>Группа:</b> ${groupName}\n` +
+            `⏰ <b>Время:</b> ${lessonTime}`;
 
+          // Отправка в Топик 74 (Подтверждено)
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -544,16 +553,22 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || '—';
+        const childName = leadDetails?.childName || leadDetails?.child_name || '—';
+        const phone = leadDetails?.phone || '—';
+        const city = leadDetails?.city || '—';
+
         if (adminChatId) {
           const alarmMessageText = 
             `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
             `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+            `👤 <b>Родитель:</b> ${parentName}\n` +
+            `👶 <b>Ребенок:</b> ${childName}\n` +
+            `📞 <b>Телефон:</b> ${phone}\n` +
+            `🏙 <b>Город:</b> ${city}\n\n` +
             `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
 
+          // Отправка в Топик 6 (Алярмы)
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -589,7 +604,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // --- 2. КНОПКИ АДМИНИСТРАТОРА В ТОПИКЕ "ЗАПИСАН НА 1-Е ЗАНЯТИЕ" ---
+      // --- 2. КНОПКИ АДМИНИСТРАТОРА В ТОПИКЕ 3 "ЗАПИСАН НА 1-Е ЗАНЯТИЕ" ---
       if (callbackData.startsWith('admin_confirm:') || callbackData.startsWith('admin_cancel:')) {
         const isAdminConfirm = callbackData.startsWith('admin_confirm:');
         const leadId = callbackData.split(':')[1];
@@ -608,19 +623,23 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || '—';
+        const childName = leadDetails?.childName || leadDetails?.child_name || '—';
+        const phone = leadDetails?.phone || '—';
+
         if (adminChatId) {
           const targetTopicId = isAdminConfirm ? 74 : 6;
           const adminNoticeText = isAdminConfirm
             ? `✅ <b>ПОДТВЕРЖДЕНО (ОТМЕЧЕНО АДМИНОМ)</b>\n\n` +
               `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-              `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-              `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}`
+              `👤 <b>Родитель:</b> ${parentName}\n` +
+              `👶 <b>Ребенок:</b> ${childName}\n` +
+              `📞 <b>Телефон:</b> ${phone}`
             : `🚨 <b>ОТМЕНА/ПЕРЕНОС (ОТМЕЧЕНО АДМИНОМ)</b>\n\n` +
               `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-              `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-              `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}`;
+              `👤 <b>Родитель:</b> ${parentName}\n` +
+              `👶 <b>Ребенок:</b> ${childName}\n` +
+              `📞 <b>Телефон:</b> ${phone}`;
 
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
@@ -634,6 +653,7 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error(`Error sending to Topic ${targetTopicId}:`, err));
         }
 
+        // Обновляем сообщение в топике 3, убирая интерактивные кнопки
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
