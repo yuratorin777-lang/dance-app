@@ -349,58 +349,63 @@ export async function POST(req: NextRequest) {
       }
 
       if (callbackData.startsWith('confirm_parent_group:')) {
-        const [, leadId, selectedDate, groupId] = callbackData.split(':');
-        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  const [, leadId, selectedDate, groupId] = callbackData.split(':');
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        let leadDetails: any = null;
+  let leadDetails: any = null;
 
-        if (googleScriptUrl) {
-          const data = await callAppsScript(googleScriptUrl, {
-            action: 'assign_first_lesson',
-            lead_id: leadId,
-            group_id: groupId,
-            first_lesson_date: selectedDate,
-            by_parent: true
-          });
-          if (data && data.lead) {
-            leadDetails = data.lead;
-          }
-        }
+  if (googleScriptUrl) {
+    const data = await callAppsScript(googleScriptUrl, {
+      action: 'assign_first_lesson',
+      lead_id: leadId,
+      group_id: groupId,
+      first_lesson_date: selectedDate,
+      by_parent: true
+    });
+    if (data && data.lead) {
+      leadDetails = data.lead;
+    }
+  }
 
-        const [year, month, day] = selectedDate.split('-');
-        const formattedDisplayDate = `${day}.${month}.${year}`;
+  const [year, month, day] = selectedDate.split('-');
+  const formattedDisplayDate = `${day}.${month}.${year}`;
 
-        // 1. РЕДАКТИРУЕМ ИСХОДНУЮ КАРТОЧКУ В ТОПИКЕ "НОВЫЕ ЗАЯВКИ" (Убираем кнопку "Назначить")
-        const targetChatId = leadDetails?.chat_id || adminChatId;
-        const cardMessageId = leadDetails?.tg_message_id;
-        const leadsTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1'; // Топик "Новые заявки"
+  // 1. РЕДАКТИРУЕМ ИСХОДНУЮ КАРТОЧКУ В ТОПИКЕ "НОВЫЕ ЗАЯВКИ"
+  const cardMessageId = leadDetails?.tg_message_id;
+  const leadsTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1'; // Топик "Новые заявки"
 
-        if (targetChatId && cardMessageId) {
-          const updatedCardText = 
-            `🔥 <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n\n` +
-            `🆔 <b>ID Заявки:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
-            `✅ <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n` +
-            `📅 <b>Дата:</b> <code>${formattedDisplayDate}</code>\n` +
-            `🩰 <b>Группа:</b> <code>${groupId}</code>\n` +
-            `✨ <i>Родитель записался сам через бота</i>`;
+  // ВАЖНО: Карточка находится в АДМИНСКОМ ЧАТЕ, а не у родителя!
+  if (adminChatId && cardMessageId) {
+    const updatedCardText = 
+      `🔥 <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n\n` +
+      `🆔 <b>ID Заявки:</b> <code>${leadId}</code>\n` +
+      `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+      `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+      `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+      `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+      `✅ <b>СТАТУС:</b> Записан на 1-е занятие\n` +
+      `📅 <b>Дата:</b> <code>${formattedDisplayDate}</code>\n` +
+      `🩰 <b>Группа:</b> <code>${groupId}</code>\n` +
+      `✨ <i>Родитель записался сам через бота</i>`;
 
-          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: targetChatId,
-              message_id: Number(cardMessageId),
-              message_thread_id: Number(leadsTopicId),
-              text: updatedCardText,
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: [] } // 👈 Удаляет кнопку!
-            })
-          }).catch(err => console.error('Error editing original admin card:', err));
-        }
+    const editPayload: any = {
+      chat_id: adminChatId, // ИСПОЛЬЗУЕМ ИМЕННО АДМИНСКИЙ ЧАТ
+      message_id: Number(cardMessageId),
+      text: updatedCardText,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [] } // ПУСТОЙ МАССИВ — УБИРАЕТ КНОПКИ!
+    };
+
+    if (leadsTopicId) {
+      editPayload.message_thread_id = Number(leadsTopicId);
+    }
+
+    await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editPayload)
+    }).catch(err => console.error('Error editing original admin card:', err));
+  }
 
         // 2. ОТПРАВЛЯЕМ НОВОЕ УВЕДОМЛЕНИЕ В ТОПИК 1-ГО ЗАНЯТИЯ
         if (adminChatId) {
