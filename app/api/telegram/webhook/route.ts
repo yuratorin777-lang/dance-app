@@ -464,6 +464,8 @@ export async function POST(req: NextRequest) {
       }
 
       // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
+      
+      // --- 1. ОТВЕТЫ РОДИТЕЛЯ В ЛС БОТА ---
       if (callbackData.startsWith('confirm_trial_yes:')) {
         const leadId = callbackData.split(':')[1];
         const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -582,6 +584,72 @@ export async function POST(req: NextRequest) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
+
+        return NextResponse.json({ ok: true });
+      }
+
+      // --- 2. КНОПКИ АДМИНИСТРАТОРА В ТОПИКЕ "ЗАПИСАН НА 1-Е ЗАНЯТИЕ" ---
+      if (callbackData.startsWith('admin_confirm:') || callbackData.startsWith('admin_cancel:')) {
+        const isAdminConfirm = callbackData.startsWith('admin_confirm:');
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+
+        let leadDetails: any = null;
+
+        if (googleScriptUrl) {
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'confirm_attendance',
+            lead_id: leadId,
+            is_confirmed: isAdminConfirm
+          });
+          if (data && data.lead) {
+            leadDetails = data.lead;
+          }
+        }
+
+        if (adminChatId) {
+          const targetTopicId = isAdminConfirm ? 74 : 6;
+          const adminNoticeText = isAdminConfirm
+            ? `✅ <b>ПОДТВЕРЖДЕНО (ОТМЕЧЕНО АДМИНОМ)</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+              `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+              `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}`
+            : `🚨 <b>ОТМЕНА/ПЕРЕНОС (ОТМЕЧЕНО АДМИНОМ)</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+              `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+              `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}`;
+
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: targetTopicId,
+              text: adminNoticeText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error(`Error sending to Topic ${targetTopicId}:`, err));
+        }
+
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: (isAdminConfirm ? '✅ <b>Подтверждено администратором</b>' : '🚨 <b>Отменено/Перенос (отмечено админом)</b>') + `\n🆔 ID: <code>${leadId}</code>`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [] }
+          })
+        });
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Статус обновлен!' })
         });
 
         return NextResponse.json({ ok: true });
