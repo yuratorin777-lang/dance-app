@@ -478,18 +478,20 @@ export async function POST(req: NextRequest) {
             lead_id: leadId,
             is_confirmed: true
           });
-          if (data && data.lead) {
-            leadDetails = data.lead;
+
+          // Проверяем все возможные варианты ответа от Apps Script
+          if (data) {
+            leadDetails = data.lead || data.result || (data.parentName ? data : null);
           }
         }
 
-        // Извлекаем поля безопасно из camelCase и snake_case
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || '—';
-        const childName = leadDetails?.childName || leadDetails?.child_name || '—';
-        const phone = leadDetails?.phone || '—';
-        const city = leadDetails?.city || '—';
-        const groupName = leadDetails?.groupName || leadDetails?.group_name || '—';
-        const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || '—';
+        // Извлекаем поля с максимальным покрытием возможных ключей
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || '—';
+        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || '—';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || '—';
+        const city = leadDetails?.city || leadDetails?.['Город'] || '—';
+        const groupName = leadDetails?.groupName || leadDetails?.group_name || leadDetails?.['Группа'] || '—';
+        const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || leadDetails?.['Время'] || '—';
 
         if (adminChatId) {
           const confirmMessageText = 
@@ -523,7 +525,7 @@ export async function POST(req: NextRequest) {
             message_id: messageId,
             text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
             parse_mode: 'HTML',
-            reply_markup: getInfoMenuKeyboard()
+            reply_markup: typeof getInfoMenuKeyboard === 'function' ? getInfoMenuKeyboard() : { inline_keyboard: [] }
           })
         });
 
@@ -548,15 +550,16 @@ export async function POST(req: NextRequest) {
             lead_id: leadId,
             is_confirmed: false
           });
-          if (data && data.lead) {
-            leadDetails = data.lead;
+
+          if (data) {
+            leadDetails = data.lead || data.result || (data.parentName ? data : null);
           }
         }
 
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || '—';
-        const childName = leadDetails?.childName || leadDetails?.child_name || '—';
-        const phone = leadDetails?.phone || '—';
-        const city = leadDetails?.city || '—';
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || '—';
+        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || '—';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || '—';
+        const city = leadDetails?.city || leadDetails?.['Город'] || '—';
 
         if (adminChatId) {
           const alarmMessageText = 
@@ -618,14 +621,15 @@ export async function POST(req: NextRequest) {
             lead_id: leadId,
             is_confirmed: isAdminConfirm
           });
-          if (data && data.lead) {
-            leadDetails = data.lead;
+
+          if (data) {
+            leadDetails = data.lead || data.result || (data.parentName ? data : null);
           }
         }
 
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || '—';
-        const childName = leadDetails?.childName || leadDetails?.child_name || '—';
-        const phone = leadDetails?.phone || '—';
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || '—';
+        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || '—';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || '—';
 
         if (adminChatId) {
           const targetTopicId = isAdminConfirm ? 74 : 6;
