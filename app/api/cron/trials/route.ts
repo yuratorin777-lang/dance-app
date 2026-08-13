@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
 
   const googleScriptUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL || process.env.APPS_SCRIPT_WEBHOOK_URL || '';
   const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID || '';
+  const firstLessonTopicId = process.env.TELEGRAM_FIRST_LESSON_TOPIC_ID || '3'; // Топик 3 по умолчанию
 
   if (!googleScriptUrl || !botToken) {
     return NextResponse.json({ error: 'Missing environment variables' }, { status: 500 });
@@ -48,41 +50,76 @@ export async function GET(req: NextRequest) {
     let sentCount = 0;
 
     for (const item of items) {
-      // Унифицированные ключи: поддерживаем camelCase и snake_case
+      // Поддерживаем все вариации ключей (camelCase, snake_case и русские названия из GAS)
       const leadId = item.leadId || item.lead_id;
       const parentTgId = item.parentTgId || item.parent_chat_id || item.chat_id;
-      const childName = item.childName || item.child_name || '';
+      const parentName = item.parentName || item.parent_name || item['Имя родителя'] || '—';
+      const childName = item.childName || item.child_name || item['Имя ребенка'] || '—';
+      const phone = item.phone || item['Телефон'] || '—';
+      const city = item.city || item['Город'] || '—';
       const lessonTime = item.lessonTime || item.lesson_time || 'не указано';
       const branchAddress = item.branchAddress || item.branch_address || 'не указан';
 
-      if (!parentTgId || isNaN(Number(parentTgId))) continue;
+      const hasBot = parentTgId && !isNaN(Number(parentTgId)) && String(parentTgId) !== '-';
 
-      const messageText = 
-        `Здравствуйте! 💃🏻\n\n` +
-        `Напоминаем, что <b>сегодня</b> у ребенка <b>${childName}</b> запланировано первое пробное занятие!\n\n` +
-        `⏰ <b>Время:</b> ${lessonTime}\n` +
-        `📍 <b>Адрес:</b> ${branchAddress}\n\n` +
-        `Подтвердите, пожалуйста, ваше присутствие:`;
+      // -------------------------------------------------------------
+      // ШАГ 1: ОТПРАВКА В АДМИНСКИЙ ЧАТ (ТОПИК 3) — РАБОТАЕТ ВСЕГДА!
+      // -------------------------------------------------------------
+      if (adminChatId) {
+        const adminMessageText = 
+          `🔔 <b>СЕГОДНЯ ПЕРВОЕ ЗАНЯТИЕ!</b>\n\n` +
+          `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+          `👤 <b>Родитель:</b> ${parentName}\n` +
+          `👶 <b>Ребенок:</b> ${childName}\n` +
+          `📞 <b>Телефон:</b> ${phone}\n` +
+          `🏙 <b>Город:</b> ${city}\n` +
+          `⏰ <b>Время:</b> ${lessonTime}\n` +
+          `📍 <b>Адрес:</b> ${branchAddress}\n\n` +
+          `🤖 <b>Статус бота:</b> ${hasBot ? '✅ Подключен к боту' : '❌ Без бота (Сайт/Таблица)'}`;
 
-      const keyboard = {
-        inline_keyboard: [
-          [{ text: '✅ Подтверждаю, будем', callback_data: `confirm_trial_yes:${leadId}` }],
-          [{ text: '❌ Не сможем прийти', callback_data: `confirm_trial_no:${leadId}` }]
-        ]
-      };
+        const adminKeyboard = {
+          inline_keyboard: [
+            [
+              { text: '✅ Подтвердить', callback_data: `admin_confirm:${leadId}` },
+              { text: '🚨 Отмена/Перенос', callback_data: `admin_cancel:${leadId}` }
+            ]
+          ]
+        };
 
-      // 2. Отправляем сообщение в Telegram
-      const messageId = await sendTelegramMessage(botToken, parentTgId, messageText, keyboard);
-
-      // 3. Сохраняем tg_message_id в таблицу для последующего скрытия кнопок
-      if (messageId) {
-        await callAppsScript(googleScriptUrl, {
-          action: 'save_parent_message_id',
-          leadId: leadId,
-          messageId: messageId
-        });
-        sentCount++;
+        await sendTelegramMessage(botToken, adminChatId, adminMessageText, adminKeyboard, Number(firstLessonTopicId));
       }
+
+      // -------------------------------------------------------------
+      // ШАГ 2: ОТПРАВКА РОДИТЕЛЮ В ЛС — ТОЛЬКО ЕСЛИ ЕСТЬ БОТ
+      // -------------------------------------------------------------
+      if (hasBot) {
+        const parentMessageText = 
+          `Здравствуйте! 💃🏻\n\n` +
+          `Напоминаем, что <b>сегодня</b> у ребенка <b>${childName}</b> запланировано первое пробное занятие!\n\n` +
+          `⏰ <b>Время:</b> ${lessonTime}\n` +
+          `📍 <b>Адрес:</b> ${branchAddress}\n\n` +
+          `Подтвердите, пожалуйста, ваше присутствие:`;
+
+        const parentKeyboard = {
+          inline_keyboard: [
+            [{ text: '✅ Подтверждаю, будем', callback_data: `confirm_trial_yes:${leadId}` }],
+            [{ text: '❌ Не сможем прийти', callback_data: `confirm_trial_no:${leadId}` }]
+          ]
+        };
+
+        const messageId = await sendTelegramMessage(botToken, parentTgId, parentMessageText, parentKeyboard);
+
+        // Сохраняем message_id, чтобы убрать кнопки после ответа
+        if (messageId) {
+          await callAppsScript(googleScriptUrl, {
+            action: 'save_parent_message_id',
+            leadId: leadId,
+            messageId: messageId
+          });
+        }
+      }
+
+      sentCount++;
     }
 
     return NextResponse.json({ success: true, processed: sentCount });
@@ -92,17 +129,29 @@ export async function GET(req: NextRequest) {
   }
 }
 
-async function sendTelegramMessage(token: string, chatId: string | number, text: string, replyMarkup?: any): Promise<number | null> {
+async function sendTelegramMessage(
+  token: string, 
+  chatId: string | number, 
+  text: string, 
+  replyMarkup?: any, 
+  threadId?: number
+): Promise<number | null> {
   try {
+    const body: any = {
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup
+    };
+
+    if (threadId) {
+      body.message_thread_id = threadId;
+    }
+
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'HTML',
-        reply_markup: replyMarkup
-      }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     return data.ok ? data.result.message_id : null;
