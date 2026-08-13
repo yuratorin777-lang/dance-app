@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ------------------------------------------------------------------------
+    /// ------------------------------------------------------------------------
     // SUB-SECTION 2.2: CALLBACK QUERIES (BUTTON PRESSES)
     // ------------------------------------------------------------------------
     if (update.callback_query) {
@@ -232,12 +232,15 @@ export async function POST(req: NextRequest) {
       const callbackData = callbackQuery.data || '';
       const message = callbackQuery.message;
 
+      // ⚡ МГНОВЕННО ГАСИМ «ЧАСИКИ» НА КНОПКЕ ДЛЯ ЛЮБОГО КЛИКА
+      // Это предотвращает заморозку интерфейса в Telegram и не требует перезахода в бот
+      await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: callbackQuery.id })
+      }).catch(err => console.error('Error answering callback query immediately:', err));
+
       if (!message) {
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id })
-        });
         return NextResponse.json({ ok: true });
       }
 
@@ -245,13 +248,10 @@ export async function POST(req: NextRequest) {
       const messageId = message.message_id;
 
       if (callbackData === 'ignore') {
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id })
-        });
         return NextResponse.json({ ok: true });
       }
+
+      // Далее идет вся твоя остальная логика обработки (confirm_parent_group и т.д.)
 
       // 📌 SECTION 2.3: INFO MENU HANDLERS
       if (callbackData.startsWith('info_')) {
