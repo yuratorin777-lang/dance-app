@@ -65,7 +65,7 @@ ${JSON.stringify(knowledgeBase, null, 2)}
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "openai/gpt-oss-120b",
+        model: "qwen/qwen3.6-27b",
         messages: formattedMessages,
         temperature: 0.4,
         max_tokens: 300
