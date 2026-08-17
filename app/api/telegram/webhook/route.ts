@@ -517,27 +517,27 @@ export async function POST(req: NextRequest) {
           }).catch(err => console.error('Error sending to Topic 74:', err));
 
           // Снимаем кнопки у администратора в Топике 3
-          if (adminMessageId) {
-            const topic3UpdateText = 
-              `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
-              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
-              (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
-              (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}` : '');
+const parsedAdminMsgId = Number(adminMessageId);
+if (adminMessageId && !isNaN(parsedAdminMsgId) && parsedAdminMsgId > 0) {
+  const topic3UpdateText = 
+    `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+    `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+    (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
+    (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
+    (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}` : '');
 
-            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: adminChatId,
-                message_id: Number(adminMessageId),
-                text: topic3UpdateText,
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: [] }
-              })
-            }).catch(err => console.error('Error updating Topic 3 message:', err));
-          }
-        }
+  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: adminChatId,
+      message_id: parsedAdminMsgId,
+      text: topic3UpdateText,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [] }
+    })
+  }).catch(err => console.error('Error updating Topic 3 message:', err));
+}
 
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
           method: 'POST',
