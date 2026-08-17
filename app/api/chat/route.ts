@@ -65,7 +65,7 @@ ${JSON.stringify(knowledgeBase, null, 2)}
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "qwen/qwen3.6-27b",
+        model: "groq/compound",
         messages: formattedMessages,
         temperature: 0.4,
         max_tokens: 300
