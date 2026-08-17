@@ -479,19 +479,24 @@ export async function POST(req: NextRequest) {
             is_confirmed: true
           }).catch(err => console.error('Apps Script error:', err));
 
-          if (data) {
-            leadDetails = data.lead || data.result || (data.parentName ? data : null);
+          console.log('Apps Script response (YES):', JSON.stringify(data));
+
+          if (data && data.ok) {
+            leadDetails = data.lead || data.result || data;
           }
         }
 
-        // Подтягиваем данные из ответа или используем фоллбэки
+        // Подтягиваем данные с поддержкой любых названий полей из Apps Script
         const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || 'Не указано';
         const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
         const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
         const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
         const groupName = leadDetails?.groupName || leadDetails?.group_name || leadDetails?.['Группа'] || '—';
         const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || leadDetails?.['Время'] || '—';
-        const adminMessageId = leadDetails?.adminMessageId || leadDetails?.['tg_message_id']; // ID сообщения в Топике 3
+        
+        // Поиск ID сообщения администратора в Топике 3
+        const rawAdminMsgId = leadDetails?.adminMessageId || leadDetails?.admin_message_id || leadDetails?.['tg_message_id'] || leadDetails?.tgMessageId;
+        const adminMessageId = rawAdminMsgId ? Number(rawAdminMsgId) : null;
 
         if (adminChatId) {
           const confirmMessageText = 
@@ -516,9 +521,8 @@ export async function POST(req: NextRequest) {
             })
           }).catch(err => console.error('Error sending to Topic 74:', err));
 
-          // Снимаем кнопки у администратора в Топике 3 (безопасная проверка message_id)
-          const parsedAdminMsgId = Number(adminMessageId);
-          if (adminMessageId && !isNaN(parsedAdminMsgId) && parsedAdminMsgId > 0) {
+          // Снимаем кнопки у администратора в Топике 3
+          if (adminMessageId && !isNaN(adminMessageId) && adminMessageId > 0) {
             const topic3UpdateText = 
               `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
               `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
@@ -531,12 +535,14 @@ export async function POST(req: NextRequest) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: adminChatId,
-                message_id: parsedAdminMsgId,
+                message_id: adminMessageId,
                 text: topic3UpdateText,
                 parse_mode: 'HTML',
                 reply_markup: { inline_keyboard: [] }
               })
             }).catch(err => console.error('Error updating Topic 3 message:', err));
+          } else {
+            console.warn(`[WARN] adminMessageId not found or invalid for leadId ${leadId}:`, rawAdminMsgId);
           }
         }
 
@@ -574,8 +580,10 @@ export async function POST(req: NextRequest) {
             is_confirmed: false
           }).catch(err => console.error('Apps Script error:', err));
 
-          if (data) {
-            leadDetails = data.lead || data.result || (data.parentName ? data : null);
+          console.log('Apps Script response (NO):', JSON.stringify(data));
+
+          if (data && data.ok) {
+            leadDetails = data.lead || data.result || data;
           }
         }
 
@@ -583,7 +591,9 @@ export async function POST(req: NextRequest) {
         const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
         const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
         const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
-        const adminMessageId = leadDetails?.adminMessageId || leadDetails?.['tg_message_id']; // ID сообщения в Топике 3
+        
+        const rawAdminMsgId = leadDetails?.adminMessageId || leadDetails?.admin_message_id || leadDetails?.['tg_message_id'] || leadDetails?.tgMessageId;
+        const adminMessageId = rawAdminMsgId ? Number(rawAdminMsgId) : null;
 
         if (adminChatId) {
           const alarmMessageText = 
@@ -607,9 +617,8 @@ export async function POST(req: NextRequest) {
             })
           }).catch(err => console.error('Error sending to Topic 6:', err));
 
-          // Снимаем кнопки у администратора в Топике 3 (безопасная проверка message_id)
-          const parsedAdminMsgId = Number(adminMessageId);
-          if (adminMessageId && !isNaN(parsedAdminMsgId) && parsedAdminMsgId > 0) {
+          // Снимаем кнопки у администратора в Топике 3
+          if (adminMessageId && !isNaN(adminMessageId) && adminMessageId > 0) {
             const topic3UpdateText = 
               `🚨 <b>ОТМЕНА РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
               `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
@@ -622,12 +631,14 @@ export async function POST(req: NextRequest) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: adminChatId,
-                message_id: parsedAdminMsgId,
+                message_id: adminMessageId,
                 text: topic3UpdateText,
                 parse_mode: 'HTML',
                 reply_markup: { inline_keyboard: [] }
               })
             }).catch(err => console.error('Error updating Topic 3 message:', err));
+          } else {
+            console.warn(`[WARN] adminMessageId not found or invalid for leadId ${leadId}:`, rawAdminMsgId);
           }
         }
 
