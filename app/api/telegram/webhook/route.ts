@@ -473,7 +473,7 @@ export async function POST(req: NextRequest) {
         let leadDetails: any = null;
 
         if (googleScriptUrl) {
-          const data = await callAppsScript(googleScriptUrl, {
+          const data: any = await callAppsScript(googleScriptUrl, {
             action: 'confirm_attendance',
             lead_id: leadId,
             is_confirmed: true
@@ -491,6 +491,7 @@ export async function POST(req: NextRequest) {
         const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
         const groupName = leadDetails?.groupName || leadDetails?.group_name || leadDetails?.['Группа'] || '—';
         const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || leadDetails?.['Время'] || '—';
+        const adminMessageId = leadDetails?.adminMessageId || leadDetails?.['tg_message_id']; // ID сообщения в Топике 3
 
         if (adminChatId) {
           const confirmMessageText = 
@@ -514,6 +515,28 @@ export async function POST(req: NextRequest) {
               parse_mode: 'HTML'
             })
           }).catch(err => console.error('Error sending to Topic 74:', err));
+
+          // Снимаем кнопки у администратора в Топике 3
+          if (adminMessageId) {
+            const topic3UpdateText = 
+              `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
+              (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
+              (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}` : '');
+
+            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: adminChatId,
+                message_id: Number(adminMessageId),
+                text: topic3UpdateText,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [] }
+              })
+            }).catch(err => console.error('Error updating Topic 3 message:', err));
+          }
         }
 
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
@@ -544,7 +567,7 @@ export async function POST(req: NextRequest) {
         let leadDetails: any = null;
 
         if (googleScriptUrl) {
-          const data = await callAppsScript(googleScriptUrl, {
+          const data: any = await callAppsScript(googleScriptUrl, {
             action: 'confirm_attendance',
             lead_id: leadId,
             is_confirmed: false
@@ -559,6 +582,7 @@ export async function POST(req: NextRequest) {
         const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
         const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
         const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
+        const adminMessageId = leadDetails?.adminMessageId || leadDetails?.['tg_message_id']; // ID сообщения в Топике 3
 
         if (adminChatId) {
           const alarmMessageText = 
@@ -581,6 +605,28 @@ export async function POST(req: NextRequest) {
               parse_mode: 'HTML'
             })
           }).catch(err => console.error('Error sending to Topic 6:', err));
+
+          // Снимаем кнопки у администратора в Топике 3
+          if (adminMessageId) {
+            const topic3UpdateText = 
+              `🚨 <b>ОТМЕНА РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
+              (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
+              (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}` : '');
+
+            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: adminChatId,
+                message_id: Number(adminMessageId),
+                text: topic3UpdateText,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [] }
+              })
+            }).catch(err => console.error('Error updating Topic 3 message:', err));
+          }
         }
 
         const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
