@@ -477,32 +477,31 @@ export async function POST(req: NextRequest) {
             action: 'confirm_attendance',
             lead_id: leadId,
             is_confirmed: true
-          });
+          }).catch(err => console.error('Apps Script error:', err));
 
-          // Проверяем все возможные варианты ответа от Apps Script
           if (data) {
             leadDetails = data.lead || data.result || (data.parentName ? data : null);
           }
         }
 
-        // Извлекаем поля с максимальным покрытием возможных ключей
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || '—';
-        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || '—';
-        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || '—';
-        const city = leadDetails?.city || leadDetails?.['Город'] || '—';
+        // Подтягиваем данные из ответа или используем фоллбэки
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || 'Не указано';
+        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
+        const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
         const groupName = leadDetails?.groupName || leadDetails?.group_name || leadDetails?.['Группа'] || '—';
         const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || leadDetails?.['Время'] || '—';
 
         if (adminChatId) {
           const confirmMessageText = 
-            `✅ <b>ПОДТВЕРЖДЕНО ПРИСУТСТВИЕ НА 1-М ЗАНЯТИИ!</b>\n\n` +
+            `✅ <b>РОДИТЕЛЬ ПОДТВЕРДИЛ ПРИСУТСТВИЕ (ЧЕРЕЗ БОТА)</b>\n\n` +
             `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${parentName}\n` +
-            `👶 <b>Ребенок:</b> ${childName}\n` +
-            `📞 <b>Телефон:</b> ${phone}\n` +
-            `🏙 <b>Город:</b> ${city}\n` +
-            `🩰 <b>Группа:</b> ${groupName}\n` +
-            `⏰ <b>Время:</b> ${lessonTime}`;
+            (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
+            (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
+            (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}\n` : '') +
+            (city !== 'Не указано' ? `🏙 <b>Город:</b> ${city}\n` : '') +
+            (groupName !== '—' ? `🩰 <b>Группа:</b> ${groupName}\n` : '') +
+            (lessonTime !== '—' ? `⏰ <b>Время:</b> ${lessonTime}\n` : '');
 
           // Отправка в Топик 74 (Подтверждено)
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -549,27 +548,27 @@ export async function POST(req: NextRequest) {
             action: 'confirm_attendance',
             lead_id: leadId,
             is_confirmed: false
-          });
+          }).catch(err => console.error('Apps Script error:', err));
 
           if (data) {
             leadDetails = data.lead || data.result || (data.parentName ? data : null);
           }
         }
 
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || '—';
-        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || '—';
-        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || '—';
-        const city = leadDetails?.city || leadDetails?.['Город'] || '—';
+        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || 'Не указано';
+        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
+        const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
 
         if (adminChatId) {
           const alarmMessageText = 
-            `🚨 <b>АЛЯРМ! ОТМЕНА/ПЕРЕНОС ПЕРВОГО ЗАНЯТИЯ!</b>\n\n` +
+            `🚨 <b>ОТМЕНА/ПЕРЕНОС РОДИТЕЛЕМ (ЧЕРЕЗ БОТА)</b>\n\n` +
             `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            `👤 <b>Родитель:</b> ${parentName}\n` +
-            `👶 <b>Ребенок:</b> ${childName}\n` +
-            `📞 <b>Телефон:</b> ${phone}\n` +
-            `🏙 <b>Город:</b> ${city}\n\n` +
-            `⚠️ <i>Родитель сообщил, что сегодня прийти не сможет. Свяжитесь для переноса!</i>`;
+            (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
+            (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
+            (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}\n` : '') +
+            (city !== 'Не указано' ? `🏙 <b>Город:</b> ${city}\n` : '') +
+            `\n⚠️ <i>Родитель сообщил в боте, что прийти не сможет. Свяжитесь для уточнения переноса!</i>`;
 
           // Отправка в Топик 6 (Алярмы)
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
