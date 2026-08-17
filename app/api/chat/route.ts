@@ -65,7 +65,7 @@ ${JSON.stringify(knowledgeBase, null, 2)}
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: "qwen-3.6-27b",
         messages: formattedMessages,
         temperature: 0.4,
         max_tokens: 300
