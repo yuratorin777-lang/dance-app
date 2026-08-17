@@ -465,205 +465,210 @@ export async function POST(req: NextRequest) {
 
       // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
       
-      // --- 1. ОТВЕТЫ РОДИТЕЛЯ В ЛС БОТА ---
-      if (callbackData.startsWith('confirm_trial_yes:')) {
-        const leadId = callbackData.split(':')[1];
-        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+// --- 1. ОТВЕТ «ДА» РОДИТЕЛЯ В ЛС БОТА ---
+if (callbackData.startsWith('confirm_trial_yes:')) {
+  const leadId = callbackData.split(':')[1];
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        let leadDetails: any = null;
+  let leadDetails: any = null;
 
-        if (googleScriptUrl) {
-          const data: any = await callAppsScript(googleScriptUrl, {
-            action: 'confirm_attendance',
-            lead_id: leadId,
-            is_confirmed: true
-          }).catch(err => console.error('Apps Script error:', err));
+  if (googleScriptUrl) {
+    const data: any = await callAppsScript(googleScriptUrl, {
+      action: 'confirm_attendance',
+      lead_id: leadId,
+      is_confirmed: true
+    }).catch(err => console.error('Apps Script error:', err));
 
-          console.log('Apps Script response (YES):', JSON.stringify(data));
+    console.log('Apps Script response (YES):', JSON.stringify(data));
 
-          if (data && data.ok) {
-            leadDetails = data.lead || data.result || data;
-          }
-        }
+    if (data && data.ok) {
+      // Извлекаем объект лида
+      leadDetails = data.lead || data.result || data;
+    }
+  }
 
-        // Подтягиваем данные с поддержкой любых названий полей из Apps Script
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || 'Не указано';
-        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
-        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
-        const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
-        const groupName = leadDetails?.groupName || leadDetails?.group_name || leadDetails?.['Группа'] || '—';
-        const lessonTime = leadDetails?.lessonTime || leadDetails?.lesson_time || leadDetails?.['Время'] || '—';
-        
-        // Поиск ID сообщения администратора в Топике 3
-        const rawAdminMsgId = leadDetails?.adminMessageId || leadDetails?.admin_message_id || leadDetails?.['tg_message_id'] || leadDetails?.tgMessageId;
-        const adminMessageId = rawAdminMsgId ? Number(rawAdminMsgId) : null;
+  // Подтягиваем данные
+  const parentName = leadDetails?.parent_name || leadDetails?.parentName || leadDetails?.['Имя родителя'] || 'Не указано';
+  const childName = leadDetails?.child_name || leadDetails?.childName || leadDetails?.['Имя ребенка'] || 'Не указано';
+  const phone = leadDetails?.phone || leadDetails?.['Телефон'] || 'Не указано';
+  const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
+  const groupName = leadDetails?.group_name || leadDetails?.groupName || leadDetails?.['Группа'] || '—';
+  const lessonTime = leadDetails?.lesson_time || leadDetails?.lessonTime || leadDetails?.['Время'] || '—';
+  
+  // Извлекаем ID сообщения из колонки L
+  const rawAdminMsgId = leadDetails?.tg_message_id || leadDetails?.tgMessageId || leadDetails?.adminMessageId || leadDetails?.admin_message_id;
+  const adminMessageId = rawAdminMsgId && !isNaN(Number(rawAdminMsgId)) && Number(rawAdminMsgId) > 0 ? Number(rawAdminMsgId) : null;
 
-        if (adminChatId) {
-          const confirmMessageText = 
-            `✅ <b>РОДИТЕЛЬ ПОДТВЕРДИЛ ПРИСУТСТВИЕ (ЧЕРЕЗ БОТА)</b>\n\n` +
-            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
-            (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
-            (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}\n` : '') +
-            (city !== 'Не указано' ? `🏙 <b>Город:</b> ${city}\n` : '') +
-            (groupName !== '—' ? `🩰 <b>Группа:</b> ${groupName}\n` : '') +
-            (lessonTime !== '—' ? `⏰ <b>Время:</b> ${lessonTime}\n` : '');
+  if (adminChatId) {
+    const confirmMessageText = 
+      `✅ <b>РОДИТЕЛЬ ПОДТВЕРДИЛ ПРИСУТСТВИЕ (ЧЕРЕЗ БОТА)</b>\n\n` +
+      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+      `👤 <b>Родитель:</b> ${parentName}\n` +
+      `👶 <b>Ребенок:</b> ${childName}\n` +
+      `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+      `🏙 <b>Город:</b> ${city}\n` +
+      (groupName !== '—' ? `🩰 <b>Группа:</b> ${groupName}\n` : '') +
+      (lessonTime !== '—' ? `⏰ <b>Время:</b> ${lessonTime}\n` : '');
 
-          // Отправка в Топик 74 (Подтверждено)
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: adminChatId,
-              message_thread_id: 74,
-              text: confirmMessageText,
-              parse_mode: 'HTML'
-            })
-          }).catch(err => console.error('Error sending to Topic 74:', err));
+    // 1. Отправка карточки с ПОЛНЫМИ ДАННЫМИ в Топик 74 (Подтверждено)
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: adminChatId,
+        message_thread_id: 74,
+        text: confirmMessageText,
+        parse_mode: 'HTML'
+      })
+    }).catch(err => console.error('Error sending to Topic 74:', err));
 
-          // Снимаем кнопки у администратора в Топике 3
-          if (adminMessageId && !isNaN(adminMessageId) && adminMessageId > 0) {
-            const topic3UpdateText = 
-              `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
-              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
-              (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
-              (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}` : '');
+    // 2. Снимаем кнопки и меняем текст в Топике 3
+    if (adminMessageId) {
+      const topic3UpdateText = 
+        `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+        `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+        `👤 <b>Родитель:</b> ${parentName}\n` +
+        `👶 <b>Ребенок:</b> ${childName}\n` +
+        `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+        `🏙 <b>Город:</b> ${city}`;
 
-            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: adminChatId,
-                message_id: adminMessageId,
-                text: topic3UpdateText,
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: [] }
-              })
-            }).catch(err => console.error('Error updating Topic 3 message:', err));
-          } else {
-            console.warn(`[WARN] adminMessageId not found or invalid for leadId ${leadId}:`, rawAdminMsgId);
-          }
-        }
+      await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: adminChatId,
+          message_id: adminMessageId,
+          text: topic3UpdateText,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }
+        })
+      }).catch(err => console.error('Error updating Topic 3 message:', err));
+    } else {
+      console.warn(`[WARN] adminMessageId (tg_message_id) not found for leadId ${leadId}`);
+    }
+  }
 
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
-            parse_mode: 'HTML',
-            reply_markup: typeof getInfoMenuKeyboard === 'function' ? getInfoMenuKeyboard() : { inline_keyboard: [] }
-          })
-        });
+  // Ответ родителю в ЛС
+  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
+      parse_mode: 'HTML',
+      reply_markup: typeof getInfoMenuKeyboard === 'function' ? getInfoMenuKeyboard() : { inline_keyboard: [] }
+    })
+  });
 
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
-        });
+  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
+  });
 
-        return NextResponse.json({ ok: true });
-      }
+  return NextResponse.json({ ok: true });
+}
 
-      if (callbackData.startsWith('confirm_trial_no:')) {
-        const leadId = callbackData.split(':')[1];
-        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+// --- 2. ОТВЕТ «НЕТ» (ОТМЕНА/ПЕРЕНОС) РОДИТЕЛЯ В ЛС БОТА ---
+if (callbackData.startsWith('confirm_trial_no:')) {
+  const leadId = callbackData.split(':')[1];
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        let leadDetails: any = null;
+  let leadDetails: any = null;
 
-        if (googleScriptUrl) {
-          const data: any = await callAppsScript(googleScriptUrl, {
-            action: 'confirm_attendance',
-            lead_id: leadId,
-            is_confirmed: false
-          }).catch(err => console.error('Apps Script error:', err));
+  if (googleScriptUrl) {
+    const data: any = await callAppsScript(googleScriptUrl, {
+      action: 'confirm_attendance',
+      lead_id: leadId,
+      is_confirmed: false
+    }).catch(err => console.error('Apps Script error:', err));
 
-          console.log('Apps Script response (NO):', JSON.stringify(data));
+    console.log('Apps Script response (NO):', JSON.stringify(data));
 
-          if (data && data.ok) {
-            leadDetails = data.lead || data.result || data;
-          }
-        }
+    if (data && data.ok) {
+      leadDetails = data.lead || data.result || data;
+    }
+  }
 
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || 'Не указано';
-        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || 'Не указано';
-        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || 'Не указано';
-        const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
-        
-        const rawAdminMsgId = leadDetails?.adminMessageId || leadDetails?.admin_message_id || leadDetails?.['tg_message_id'] || leadDetails?.tgMessageId;
-        const adminMessageId = rawAdminMsgId ? Number(rawAdminMsgId) : null;
+  const parentName = leadDetails?.parent_name || leadDetails?.parentName || leadDetails?.['Имя родителя'] || 'Не указано';
+  const childName = leadDetails?.child_name || leadDetails?.childName || leadDetails?.['Имя ребенка'] || 'Не указано';
+  const phone = leadDetails?.phone || leadDetails?.['Телефон'] || 'Не указано';
+  const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
+  
+  const rawAdminMsgId = leadDetails?.tg_message_id || leadDetails?.tgMessageId || leadDetails?.adminMessageId || leadDetails?.admin_message_id;
+  const adminMessageId = rawAdminMsgId && !isNaN(Number(rawAdminMsgId)) && Number(rawAdminMsgId) > 0 ? Number(rawAdminMsgId) : null;
 
-        if (adminChatId) {
-          const alarmMessageText = 
-            `🚨 <b>ОТМЕНА/ПЕРЕНОС РОДИТЕЛЕМ (ЧЕРЕЗ БОТА)</b>\n\n` +
-            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-            (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
-            (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
-            (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}\n` : '') +
-            (city !== 'Не указано' ? `🏙 <b>Город:</b> ${city}\n` : '') +
-            `\n⚠️ <i>Родитель сообщил в боте, что прийти не сможет. Свяжитесь для уточнения переноса!</i>`;
+  if (adminChatId) {
+    const alarmMessageText = 
+      `🚨 <b>ОТМЕНА/ПЕРЕНОС РОДИТЕЛЕМ (ЧЕРЕЗ БОТА)</b>\n\n` +
+      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+      `👤 <b>Родитель:</b> ${parentName}\n` +
+      `👶 <b>Ребенок:</b> ${childName}\n` +
+      `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+      `🏙 <b>Город:</b> ${city}\n\n` +
+      `⚠️ <i>Родитель сообщил в боте, что прийти не сможет. Свяжитесь для уточнения переноса!</i>`;
 
-          // Отправка в Топик 6 (Алярмы)
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: adminChatId,
-              message_thread_id: 6,
-              text: alarmMessageText,
-              parse_mode: 'HTML'
-            })
-          }).catch(err => console.error('Error sending to Topic 6:', err));
+    // 1. Отправка в Топик 6 (Алярмы) с ПОЛНЫМИ ДАННЫМИ
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: adminChatId,
+        message_thread_id: 6,
+        text: alarmMessageText,
+        parse_mode: 'HTML'
+      })
+    }).catch(err => console.error('Error sending to Topic 6:', err));
 
-          // Снимаем кнопки у администратора в Топике 3
-          if (adminMessageId && !isNaN(adminMessageId) && adminMessageId > 0) {
-            const topic3UpdateText = 
-              `🚨 <b>ОТМЕНА РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
-              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              (parentName !== 'Не указано' ? `👤 <b>Родитель:</b> ${parentName}\n` : '') +
-              (childName !== 'Не указано' ? `👶 <b>Ребенок:</b> ${childName}\n` : '') +
-              (phone !== 'Не указано' ? `📞 <b>Телефон:</b> ${phone}` : '');
+    // 2. Снимаем кнопки у администратора в Топике 3
+    if (adminMessageId) {
+      const topic3UpdateText = 
+        `🚨 <b>ОТМЕНА РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+        `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+        `👤 <b>Родитель:</b> ${parentName}\n` +
+        `👶 <b>Ребенок:</b> ${childName}\n` +
+        `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+        `🏙 <b>Город:</b> ${city}`;
 
-            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: adminChatId,
-                message_id: adminMessageId,
-                text: topic3UpdateText,
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: [] }
-              })
-            }).catch(err => console.error('Error updating Topic 3 message:', err));
-          } else {
-            console.warn(`[WARN] adminMessageId not found or invalid for leadId ${leadId}:`, rawAdminMsgId);
-          }
-        }
+      await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: adminChatId,
+          message_id: adminMessageId,
+          text: topic3UpdateText,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }
+        })
+      }).catch(err => console.error('Error updating Topic 3 message:', err));
+    } else {
+      console.warn(`[WARN] adminMessageId not found for leadId ${leadId}`);
+    }
+  }
 
-        const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
+  const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
 
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: daysKeyboard }
-          })
-        });
+  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: daysKeyboard }
+    })
+  });
 
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ callback_query_id: callbackQuery.id })
-        });
+  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQuery.id })
+  });
 
-        return NextResponse.json({ ok: true });
-      }
+  return NextResponse.json({ ok: true });
+}
 
       // --- 2. КНОПКИ АДМИНИСТРАТОРА В ТОПИКЕ 3 "ЗАПИСАН НА 1-Е ЗАНЯТИЕ" ---
       if (callbackData.startsWith('admin_confirm:') || callbackData.startsWith('admin_cancel:')) {
