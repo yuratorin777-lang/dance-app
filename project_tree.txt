@@ -1,0 +1,51 @@
+dance-app
+├── .vercel
+│   ├── README.txt
+│   └── repo.json
+├── app
+│   ├── api
+│   │   ├── chat
+│   │   │   └── route.ts
+│   │   ├── cron
+│   │   │   ├── check-subscriptions
+│   │   │   │   └── route.ts
+│   │   │   ├── first-lesson
+│   │   │   │   └── route.ts
+│   │   │   └── trials
+│   │   │       └── route.ts
+│   │   ├── lead
+│   │   │   └── route.ts
+│   │   ├── models
+│   │   │   └── route.ts
+│   │   └── telegram
+│   │       └── webhook
+│   │           └── route.ts
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── data
+│   └── knowledgebase.json
+├── public
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── next.svg
+│   ├── vercel.svg
+│   └── window.svg
+├── _full_dump.md
+├── .env.local
+├── .gitignore
+├── AGENTS.md
+├── CLAUDE.md
+├── eslint.config.mjs
+├── git
+├── next-env.d.ts
+├── next.config.ts
+├── package-lock.json
+├── package.json
+├── postcss.config.mjs
+├── project_tree.js
+├── README.md
+├── tree.txt
+├── tsconfig.json
+└── vercel.json

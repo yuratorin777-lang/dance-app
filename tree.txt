@@ -1,10 +1,11 @@
 Структура папок
-Серийный номер тома: 0000008A 1C65:E452
+Серийный номер тома: 0000007B 1C65:E452
 C:.
 |   .env.local
 |   AGENTS.md
 |   CLAUDE.md
 |   eslint.config.mjs
+|   git
 |   next-env.d.ts
 |   next.config.ts
 |   package-lock.json
@@ -13,16 +14,15 @@ C:.
 |   README.md
 |   tree.txt
 |   tsconfig.json
+|   vercel.json
+|   _full_dump.md
 |   
 |   +---dev
-|   |   |   build-manifest.json
-|   |   |   fallback-build-manifest.json
 |   |   |   package.json
 |   |   |   prerender-manifest.json
 |   |   |   routes-manifest.json
 |   |   |   trace
 |   |   |   
-|   |   +---build
 |   |   |   |   56416d4ae4ce586f.js
 |   |   |   |   56416d4ae4ce586f.js.map
 |   |   |   |   package.json
@@ -1059,6 +1059,26 @@ C:.
 |   |   |               00001100.meta
 |   |   |               00001101.meta
 |   |   |               00001102.meta
+|   |   |               00001103.sst
+|   |   |               00001104.sst
+|   |   |               00001105.sst
+|   |   |               00001106.sst
+|   |   |               00001107.meta
+|   |   |               00001108.meta
+|   |   |               00001109.meta
+|   |   |               00001110.meta
+|   |   |               00001111.sst
+|   |   |               00001112.sst
+|   |   |               00001113.sst
+|   |   |               00001114.meta
+|   |   |               00001115.meta
+|   |   |               00001116.meta
+|   |   |               00001117.sst
+|   |   |               00001118.sst
+|   |   |               00001119.sst
+|   |   |               00001120.meta
+|   |   |               00001121.meta
+|   |   |               00001122.meta
 |   |   |               CURRENT
 |   |   |               LOG
 |   |   |               
@@ -1068,7 +1088,6 @@ C:.
 |   |   +---server
 |   |   |   |   app-paths-manifest.json
 |   |   |   |   interception-route-rewrite-manifest.js
-|   |   |   |   middleware-build-manifest.js
 |   |   |   |   middleware-manifest.json
 |   |   |   |   next-font-manifest.js
 |   |   |   |   next-font-manifest.json
@@ -1089,12 +1108,10 @@ C:.
 |   |   |   |   |       |   
 |   |   |   |   |       \---route
 |   |   |   |   |               app-paths-manifest.json
-|   |   |   |   |               build-manifest.json
 |   |   |   |   |               server-reference-manifest.json
 |   |   |   |   |               
 |   |   |   |   \---page
 |   |   |   |           app-paths-manifest.json
-|   |   |   |           build-manifest.json
 |   |   |   |           next-font-manifest.json
 |   |   |   |           react-loadable-manifest.json
 |   |   |   |           server-reference-manifest.json
@@ -1116,10 +1133,6 @@ C:.
 |   |   |   |   \---ssr
 |   |   |   |           app_page_tsx_0pxmutw._.js
 |   |   |   |           app_page_tsx_0pxmutw._.js.map
-|   |   |   |           [externals]_next_dist_1mg6puk._.js
-|   |   |   |           [externals]_next_dist_1mg6puk._.js.map
-|   |   |   |           [externals]_next_dist_shared_lib_no-fallback-error_external_0r3u29k.js
-|   |   |   |           [externals]_next_dist_shared_lib_no-fallback-error_external_0r3u29k.js.map
 |   |   |   |           [externals]__12if52y._.js
 |   |   |   |           [externals]__12if52y._.js.map
 |   |   |   |           [externals]__1vp7etu._.js
@@ -1148,8 +1161,6 @@ C:.
 |   |   |       |   _error.js.map
 |   |   |       |   
 |   |   |       +---_app
-|   |   |       |       build-manifest.json
-|   |   |       |       client-build-manifest.json
 |   |   |       |       next-font-manifest.json
 |   |   |       |       pages-manifest.json
 |   |   |       |       react-loadable-manifest.json
@@ -1160,8 +1171,6 @@ C:.
 |   |   |       |       react-loadable-manifest.json
 |   |   |       |       
 |   |   |       \---_error
-|   |   |               build-manifest.json
-|   |   |               client-build-manifest.json
 |   |   |               next-font-manifest.json
 |   |   |               pages-manifest.json
 |   |   |               react-loadable-manifest.json
@@ -1210,7 +1219,6 @@ C:.
 |   |   |   |           _error.js
 |   |   |   |           
 |   |   |   +---development
-|   |   |   |       _buildManifest.js
 |   |   |   |       _clientMiddlewareManifest.js
 |   |   |   |       _ssgManifest.js
 |   |   |   |       
@@ -1238,6 +1246,9 @@ C:.
 |           routes.d.ts
 |           validator.ts
 |           
+|       README.txt
+|       repo.json
+|       
 +---app
 |   |   favicon.ico
 |   |   globals.css
@@ -1248,9 +1259,26 @@ C:.
 |       +---chat
 |       |       route.ts
 |       |       
-|       \---lead
-|               route.ts
-|               
+|       +---cron
+|       |   +---check-subscriptions
+|       |   |       route.ts
+|       |   |       
+|       |   +---first-lesson
+|       |   |       route.ts
+|       |   |       
+|       |   \---trials
+|       |           route.ts
+|       |           
+|       +---lead
+|       |       route.ts
+|       |       
+|       +---models
+|       |       route.ts
+|       |       
+|       \---telegram
+|           \---webhook
+|                   route.ts
+|                   
 +---data
 |       knowledgebase.json
 |       
@@ -1468,8 +1496,6 @@ C:.
 |   |   |   |   |           missing-plugin-helper.js.map
 |   |   |   |   |           
 |   |   |   |   +---tools
-|   |   |   |   |       build-external-helpers.js
-|   |   |   |   |       build-external-helpers.js.map
 |   |   |   |   |       
 |   |   |   |   +---transformation
 |   |   |   |   |   |   block-hoist-plugin.js
@@ -1611,8 +1637,6 @@ C:.
 |   |   |   |   README.md
 |   |   |   |   
 |   |   |   \---lib
-|   |   |           import-builder.js
-|   |   |           import-builder.js.map
 |   |   |           import-injector.js
 |   |   |           import-injector.js.map
 |   |   |           index.js
@@ -1955,8 +1979,6 @@ C:.
 |   |   |   |   README.md
 |   |   |   |   
 |   |   |   \---lib
-|   |   |           builder.js
-|   |   |           builder.js.map
 |   |   |           formatters.js
 |   |   |           formatters.js.map
 |   |   |           index.js
@@ -2075,7 +2097,6 @@ C:.
 |   |           |           index.js
 |   |           |           index.js.map
 |   |           |           
-|   |           +---builders
 |   |           |   |   productions.js
 |   |           |   |   productions.js.map
 |   |           |   |   validateNode.js
@@ -2096,8 +2117,6 @@ C:.
 |   |           |   |       uppercase.js.map
 |   |           |   |       
 |   |           |   +---react
-|   |           |   |       buildChildren.js
-|   |           |   |       buildChildren.js.map
 |   |           |   |       
 |   |           |   \---typescript
 |   |           |           createTSUnionType.js
@@ -2234,8 +2253,6 @@ C:.
 |   |           |           cleanJSXElementLiteralChild.js.map
 |   |           |           
 |   |           \---validators
-|   |               |   buildMatchMemberExpression.js
-|   |               |   buildMatchMemberExpression.js.map
 |   |               |   is.js
 |   |               |   is.js.map
 |   |               |   isBinding.js
@@ -2288,7 +2305,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           emnapi-core.cjs.js
 |   |   |           emnapi-core.cjs.min.d.ts
 |   |   |           emnapi-core.cjs.min.js
@@ -2307,7 +2323,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           emnapi.cjs.js
 |   |   |           emnapi.cjs.min.d.ts
 |   |   |           emnapi.cjs.min.js
@@ -2328,7 +2343,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       \---dist
 |   |               wasi-threads.cjs.js
 |   |               wasi-threads.cjs.min.d.ts
 |   |               wasi-threads.cjs.min.js
@@ -2347,7 +2361,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       +---cjs
 |   |   |       |   |   index.cjs
 |   |   |       |   |   index.d.cts
@@ -2372,7 +2385,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       +---cjs
 |   |   |       |       index.cjs
 |   |   |       |       index.d.cts
@@ -2389,7 +2401,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       +---cjs
 |   |   |       |       types.d.cts
 |   |   |       |       
@@ -2406,7 +2417,6 @@ C:.
 |   |   |   |       config-schema.js
 |   |   |   |       environments.js
 |   |   |   |       
-|   |   |   +---dist
 |   |   |   |       eslintrc-universal.cjs
 |   |   |   |       eslintrc-universal.cjs.map
 |   |   |   |       eslintrc.cjs
@@ -2461,7 +2471,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       +---cjs
 |   |   |       |       index.cjs
 |   |   |       |       index.d.cts
@@ -2478,7 +2487,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       \---dist
 |   |           +---cjs
 |   |           |       index.cjs
 |   |           |       index.d.cts
@@ -2507,7 +2515,6 @@ C:.
 |   |   |           |   package.json
 |   |   |           |   README.md
 |   |   |           |   
-|   |   |           +---dist
 |   |   |           |       eslint-visitor-keys.cjs
 |   |   |           |       eslint-visitor-keys.d.cts
 |   |   |           |       index.d.ts
@@ -2533,7 +2540,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |       errors.d.ts
 |   |   |   |       fsx.d.ts
 |   |   |   |       hfs.d.ts
@@ -2551,7 +2557,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |       index.d.ts
 |   |   |   |       node-fsx.d.ts
 |   |   |   |       node-hfs.d.ts
@@ -2576,7 +2581,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |       module-importer.cjs
 |   |   |   |       module-importer.d.cts
 |   |   |   |       module-importer.d.ts
@@ -2591,7 +2595,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       \---dist
 |   |               retrier.cjs
 |   |               retrier.d.cts
 |   |               retrier.d.ts
@@ -2626,7 +2629,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       \---build
 |   |           |   index.cjs
 |   |           |   index.d.cts
 |   |           |   
@@ -2639,7 +2641,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |   |   gen-mapping.mjs
 |   |   |   |   |   gen-mapping.mjs.map
 |   |   |   |   |   gen-mapping.umd.js
@@ -2680,24 +2681,18 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |       remapping.mjs
 |   |   |   |       remapping.mjs.map
 |   |   |   |       remapping.umd.js
 |   |   |   |       remapping.umd.js.map
 |   |   |   |       
 |   |   |   +---src
-|   |   |   |       build-source-map-tree.ts
 |   |   |   |       remapping.ts
 |   |   |   |       source-map-tree.ts
 |   |   |   |       source-map.ts
 |   |   |   |       types.ts
 |   |   |   |       
 |   |   |   \---types
-|   |   |           build-source-map-tree.d.cts
-|   |   |           build-source-map-tree.d.cts.map
-|   |   |           build-source-map-tree.d.mts
-|   |   |           build-source-map-tree.d.mts.map
 |   |   |           remapping.d.cts
 |   |   |           remapping.d.cts.map
 |   |   |           remapping.d.mts
@@ -2720,7 +2715,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       |   resolve-uri.mjs
 |   |   |       |   resolve-uri.mjs.map
 |   |   |       |   resolve-uri.umd.js
@@ -2734,7 +2728,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |       sourcemap-codec.mjs
 |   |   |   |       sourcemap-codec.mjs.map
 |   |   |   |       sourcemap-codec.umd.js
@@ -2769,7 +2762,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       +---dist
 |   |       |       trace-mapping.mjs
 |   |       |       trace-mapping.mjs.map
 |   |       |       trace-mapping.umd.js
@@ -2831,7 +2823,6 @@ C:.
 |   |       |   runtime.cjs
 |   |       |   runtime.js
 |   |       |   
-|   |       \---dist
 |   |               emnapi-plugins.cjs
 |   |               emnapi-plugins.js
 |   |               fs-proxy.cjs
@@ -2842,7 +2833,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           index.d.ts
 |   |   |           index.js
 |   |   |           
@@ -2850,7 +2840,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       |   index.d.ts
 |   |   |       |   index.js
 |   |   |       |   
@@ -3268,7 +3257,6 @@ C:.
 |   |       |       
 |   |       +---scripts
 |   |       |       ast_grep.js
-|   |       |       build.js
 |   |       |       errors.js
 |   |       |       utils.js
 |   |       |       
@@ -3697,7 +3685,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           esm-cache.loader.d.mts
 |   |   |           esm-cache.loader.mjs
 |   |   |           index.d.mts
@@ -3724,7 +3711,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       \---dist
 |   |               index.d.mts
 |   |               index.d.ts
 |   |               index.js
@@ -3735,7 +3721,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       +---dist
 |   |       |       tsdoc-metadata.json
 |   |       |       wasm-util.d.ts
 |   |       |       wasm-util.esm-bundler.js
@@ -3942,7 +3927,6 @@ C:.
 |   |   |   |   README.md
 |   |   |   |   rules.d.ts
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |   |   index.d.ts
 |   |   |   |   |   index.js
 |   |   |   |   |   raw-plugin.d.ts
@@ -4433,7 +4417,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           index.d.ts
 |   |   |           index.js
 |   |   |           parser.d.ts
@@ -4444,7 +4427,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           createProjectService.d.ts
 |   |   |           createProjectService.js
 |   |   |           getParsedConfigFileFromTSServer.d.ts
@@ -4457,7 +4439,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       |   analyze.d.ts
 |   |   |       |   analyze.js
 |   |   |       |   assert.d.ts
@@ -4830,7 +4811,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |           compilerOptions.d.ts
 |   |   |           compilerOptions.js
 |   |   |           getParsedConfigFile.d.ts
@@ -4843,7 +4823,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       |   builtinSymbolLikes.d.ts
 |   |   |       |   builtinSymbolLikes.js
 |   |   |       |   containsAllTypesByName.d.ts
@@ -4896,7 +4875,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       |   index.d.ts
 |   |   |       |   index.js
 |   |   |       |   lib.d.ts
@@ -4915,7 +4893,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   +---dist
 |   |   |   |   |   ast-converter.d.ts
 |   |   |   |   |   ast-converter.js
 |   |   |   |   |   check-modifiers.d.ts
@@ -5023,7 +5000,6 @@ C:.
 |   |   |       |   |   package.json
 |   |   |       |   |   README.md
 |   |   |       |   |   
-|   |   |       |   \---dist
 |   |   |       |       +---commonjs
 |   |   |       |       |       index.d.ts
 |   |   |       |       |       index.d.ts.map
@@ -5043,7 +5019,6 @@ C:.
 |   |   |       |   |   package.json
 |   |   |       |   |   README.md
 |   |   |       |   |   
-|   |   |       |   \---dist
 |   |   |       |       +---commonjs
 |   |   |       |       |       index.d.ts
 |   |   |       |       |       index.d.ts.map
@@ -5063,7 +5038,6 @@ C:.
 |   |   |       |   |   package.json
 |   |   |       |   |   README.md
 |   |   |       |   |   
-|   |   |       |   \---dist
 |   |   |       |       +---commonjs
 |   |   |       |       |       assert-valid-pattern.d.ts
 |   |   |       |       |       assert-valid-pattern.d.ts.map
@@ -5139,7 +5113,6 @@ C:.
 |   |   |           |       clean.js
 |   |   |           |       cmp.js
 |   |   |           |       coerce.js
-|   |   |           |       compare-build.js
 |   |   |           |       compare-loose.js
 |   |   |           |       compare.js
 |   |   |           |       diff.js
@@ -5188,7 +5161,6 @@ C:.
 |   |   |   |   package.json
 |   |   |   |   README.md
 |   |   |   |   
-|   |   |   \---dist
 |   |   |       |   index.d.ts
 |   |   |       |   index.js
 |   |   |       |   json-schema.d.ts
@@ -5285,7 +5257,6 @@ C:.
 |   |       |   package.json
 |   |       |   README.md
 |   |       |   
-|   |       +---dist
 |   |       |       get-keys.d.ts
 |   |       |       get-keys.js
 |   |       |       index.d.ts
@@ -5298,7 +5269,6 @@ C:.
 |   |               |   package.json
 |   |               |   README.md
 |   |               |   
-|   |               +---dist
 |   |               |       eslint-visitor-keys.cjs
 |   |               |       eslint-visitor-keys.d.cts
 |   |               |       index.d.ts
@@ -5323,7 +5293,6 @@ C:.
 |   |   +---bin
 |   |   |       acorn
 |   |   |       
-|   |   \---dist
 |   |           acorn.d.mts
 |   |           acorn.d.ts
 |   |           acorn.js
@@ -5343,7 +5312,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           helpers.d.ts
 |   |           helpers.d.ts.map
 |   |           helpers.js
@@ -5359,7 +5327,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       ajv.bundle.js
 |   |   |       ajv.min.js
 |   |   |       ajv.min.js.map
@@ -6067,7 +6034,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           cli.cjs
 |   |           index.cjs
 |   |           index.d.ts
@@ -6244,7 +6210,6 @@ C:.
 |   |   |   |       beacon.js
 |   |   |   |       beforeafterprint.js
 |   |   |   |       bigint.js
-|   |   |   |       blobbuilder.js
 |   |   |   |       bloburls.js
 |   |   |   |       border-image.js
 |   |   |   |       border-radius.js
@@ -7036,7 +7001,6 @@ C:.
 |   |   |           ZM.js
 |   |   |           ZW.js
 |   |   |           
-|   |   \---dist
 |   |       +---lib
 |   |       |       statuses.js
 |   |       |       supported.js
@@ -7140,7 +7104,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       index.d.ts
 |   |   |       index.js
 |   |   |       index.js.map
@@ -10333,7 +10296,6 @@ C:.
 |   |   |   package.json
 |   |   |   readme.md
 |   |   |   
-|   |   +---dist
 |   |   |       index.js
 |   |   |       index.mjs
 |   |   |       
@@ -10822,7 +10784,6 @@ C:.
 |   +---eslint-config-next
 |   |   |   package.json
 |   |   |   
-|   |   +---dist
 |   |   |       core-web-vitals.d.ts
 |   |   |       core-web-vitals.js
 |   |   |       index.d.ts
@@ -11006,7 +10967,6 @@ C:.
 |   |   |   |       staticRequire.js
 |   |   |   |       
 |   |   |   +---exportMap
-|   |   |   |       builder.js
 |   |   |   |       captureDependency.js
 |   |   |   |       childContext.js
 |   |   |   |       doc.js
@@ -11120,7 +11080,6 @@ C:.
 |   |   |           no-access-key.md
 |   |   |           no-aria-hidden-on-focusable.md
 |   |   |           no-autofocus.md
-|   |   |           no-distracting-elements.md
 |   |   |           no-interactive-element-to-noninteractive-role.md
 |   |   |           no-noninteractive-element-interactions.md
 |   |   |           no-noninteractive-element-to-interactive-role.md
@@ -11168,7 +11127,6 @@ C:.
 |   |   |   |       no-access-key.js
 |   |   |   |       no-aria-hidden-on-focusable.js
 |   |   |   |       no-autofocus.js
-|   |   |   |       no-distracting-elements.js
 |   |   |   |       no-interactive-element-to-noninteractive-role.js
 |   |   |   |       no-noninteractive-element-interactions.js
 |   |   |   |       no-noninteractive-element-to-interactive-role.js
@@ -11289,7 +11247,6 @@ C:.
 |   |       |   |       no-access-key-test.js
 |   |       |   |       no-aria-hidden-on-focusable-test.js
 |   |       |   |       no-autofocus-test.js
-|   |       |   |       no-distracting-elements-test.js
 |   |       |   |       no-interactive-element-to-noninteractive-role-test.js
 |   |       |   |       no-noninteractive-element-interactions-test.js
 |   |       |   |       no-noninteractive-element-to-interactive-role-test.js
@@ -11776,7 +11733,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       eslint-scope.cjs
 |   |   |       
 |   |   \---lib
@@ -11796,7 +11752,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       eslint-visitor-keys.cjs
 |   |   |       eslint-visitor-keys.d.cts
 |   |   |       index.d.ts
@@ -11812,7 +11767,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       espree.cjs
 |   |   |       
 |   |   \---lib
@@ -11828,7 +11782,6 @@ C:.
 |   |   |   parser.js
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           esquery.esm.js
 |   |           esquery.esm.min.js
 |   |           esquery.esm.min.js.map
@@ -12122,7 +12075,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       +---commonjs
 |   |       |       all-signals.d.ts
 |   |       |       all-signals.d.ts.map
@@ -12240,9 +12192,7 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---build
 |   |   |   +---cjs
-|   |   |   |   |   tsconfig.cjs.tsbuildinfo
 |   |   |   |   |   
 |   |   |   |   +---browser-test
 |   |   |   |   |       browser-test-runner.d.ts
@@ -12290,7 +12240,6 @@ C:.
 |   |   |   |           
 |   |   |   \---esm
 |   |   |       |   package.json
-|   |   |       |   tsconfig.tsbuildinfo
 |   |   |       |   
 |   |   |       +---browser-test
 |   |   |       |       browser-test-runner.d.ts
@@ -12341,7 +12290,6 @@ C:.
 |   |       |   |   package.json
 |   |       |   |   README.md
 |   |       |   |   
-|   |       |   \---dist
 |   |       |           helpers.d.ts
 |   |       |           helpers.d.ts.map
 |   |       |           helpers.js
@@ -12356,7 +12304,6 @@ C:.
 |   |           |   package.json
 |   |           |   README.md
 |   |           |   
-|   |           \---dist
 |   |                   index.d.ts
 |   |                   index.d.ts.map
 |   |                   index.js
@@ -12371,7 +12318,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---build
 |   |       \---src
 |   |               gcp-residency.d.ts
 |   |               gcp-residency.js
@@ -12468,7 +12414,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           index.cjs
 |   |           index.d.cts
 |   |           index.d.mts
@@ -12479,7 +12424,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |   +---commonjs
 |   |   |   |       glob.d.ts
 |   |   |   |       glob.d.ts.map
@@ -12559,7 +12503,6 @@ C:.
 |   |           |   package.json
 |   |           |   README.md
 |   |           |   
-|   |           \---dist
 |   |               +---commonjs
 |   |               |       assert-valid-pattern.d.ts
 |   |               |       assert-valid-pattern.d.ts.map
@@ -12654,7 +12597,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---build
 |   |       \---src
 |   |           |   index.d.ts
 |   |           |   index.js
@@ -12764,7 +12706,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---build
 |   |       \---src
 |   |               colours.d.ts
 |   |               colours.js
@@ -12784,7 +12725,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---build
 |   |       \---src
 |   |           |   googleapis.d.ts
 |   |           |   googleapis.js
@@ -13323,7 +13263,6 @@ C:.
 |   |           |   |       v1beta.d.ts
 |   |           |   |       v1beta.js
 |   |           |   |       
-|   |           |   +---cloudbuild
 |   |           |   |       index.d.ts
 |   |           |   |       index.js
 |   |           |   |       v1.d.ts
@@ -13915,7 +13854,6 @@ C:.
 |   |           |   |       v1beta.d.ts
 |   |           |   |       v1beta.js
 |   |           |   |       
-|   |           |   +---firebaseappdistribution
 |   |           |   |       index.d.ts
 |   |           |   |       index.js
 |   |           |   |       v1.d.ts
@@ -14749,7 +14687,6 @@ C:.
 |   |           |   |       v1beta1.d.ts
 |   |           |   |       v1beta1.js
 |   |           |   |       
-|   |           |   +---remotebuildexecution
 |   |           |   |       index.d.ts
 |   |           |   |       index.js
 |   |           |   |       v1.d.ts
@@ -15296,7 +15233,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---build
 |   |   |   \---src
 |   |   |           api.d.ts
 |   |   |           api.js
@@ -15326,7 +15262,6 @@ C:.
 |   |       |   |   package.json
 |   |       |   |   README.md
 |   |       |   |   
-|   |       |   \---dist
 |   |       |           helpers.d.ts
 |   |       |           helpers.d.ts.map
 |   |       |           helpers.js
@@ -15341,9 +15276,7 @@ C:.
 |   |       |   |   package.json
 |   |       |   |   README.md
 |   |       |   |   
-|   |       |   \---build
 |   |       |       +---cjs
-|   |       |       |   |   tsconfig.cjs.tsbuildinfo
 |   |       |       |   |   
 |   |       |       |   +---browser-test
 |   |       |       |   |       browser-test-runner.d.ts
@@ -15391,7 +15324,6 @@ C:.
 |   |       |       |           
 |   |       |       \---esm
 |   |       |           |   package.json
-|   |       |           |   tsconfig.tsbuildinfo
 |   |       |           |   
 |   |       |           +---browser-test
 |   |       |           |       browser-test-runner.d.ts
@@ -15442,7 +15374,6 @@ C:.
 |   |       |   |   package.json
 |   |       |   |   README.md
 |   |       |   |   
-|   |       |   \---build
 |   |       |       \---src
 |   |       |           |   index.d.ts
 |   |       |           |   index.js
@@ -15532,7 +15463,6 @@ C:.
 |   |           |   package.json
 |   |           |   README.md
 |   |           |   
-|   |           \---dist
 |   |                   index.d.ts
 |   |                   index.d.ts.map
 |   |                   index.js
@@ -15573,7 +15503,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---build
 |   |       +---cjs
 |   |       |   \---src
 |   |       |           index.cjs
@@ -15706,7 +15635,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       |   index.js
 |   |       |   index.js.flow
 |   |       |   predicates.js
@@ -15726,7 +15654,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       |   getModuleDocblock.js
 |   |       |   getModuleDocblock.js.flow
 |   |       |   HermesAST.js.flow
@@ -15792,7 +15719,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           index.d.ts
 |   |           index.d.ts.map
 |   |           index.js
@@ -15910,7 +15836,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       bun.mjs
 |   |   |       generic.d.ts
 |   |   |       generic.js
@@ -15943,7 +15868,6 @@ C:.
 |   |           |       clean.js
 |   |           |       cmp.js
 |   |           |       coerce.js
-|   |           |       compare-build.js
 |   |           |       compare-loose.js
 |   |           |       compare.js
 |   |           |       diff.js
@@ -16358,7 +16282,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       +---commonjs
 |   |       |       index.d.ts
 |   |       |       index.d.ts.map
@@ -16386,7 +16309,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       babel.cjs
 |   |   |       jiti.cjs
 |   |   |       
@@ -16419,7 +16341,6 @@ C:.
 |   |   +---bin
 |   |   |       js-yaml.js
 |   |   |       
-|   |   +---dist
 |   |   |       js-yaml.js
 |   |   |       js-yaml.js.map
 |   |   |       js-yaml.min.js
@@ -16532,7 +16453,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       index.js
 |   |   |       index.min.js
 |   |   |       index.min.mjs
@@ -16803,7 +16723,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           magic-string.cjs.d.ts
 |   |           magic-string.cjs.js
 |   |           magic-string.cjs.js.map
@@ -16912,7 +16831,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       +---commonjs
 |   |       |       index.d.ts
 |   |       |       index.d.ts.map
@@ -17055,8 +16973,6 @@ C:.
 |   |   |       router.d.ts
 |   |   |       router.js
 |   |   |       
-|   |   +---dist
-|   |   |   |   .build-commit
 |   |   |   |   types.d.ts
 |   |   |   |   
 |   |   |   +---api
@@ -17120,16 +17036,9 @@ C:.
 |   |   |   |       next.d.ts
 |   |   |   |       next.map
 |   |   |   |       
-|   |   |   +---build
 |   |   |   |   |   after-production-compile.d.ts
 |   |   |   |   |   after-production-compile.js
 |   |   |   |   |   after-production-compile.js.map
-|   |   |   |   |   build-context.d.ts
-|   |   |   |   |   build-context.js
-|   |   |   |   |   build-context.js.map
-|   |   |   |   |   collect-build-traces.d.ts
-|   |   |   |   |   collect-build-traces.js
-|   |   |   |   |   collect-build-traces.js.map
 |   |   |   |   |   compiler.d.ts
 |   |   |   |   |   compiler.js
 |   |   |   |   |   compiler.js.map
@@ -17148,9 +17057,6 @@ C:.
 |   |   |   |   |   file-classifier.d.ts
 |   |   |   |   |   file-classifier.js
 |   |   |   |   |   file-classifier.js.map
-|   |   |   |   |   generate-build-id.d.ts
-|   |   |   |   |   generate-build-id.js
-|   |   |   |   |   generate-build-id.js.map
 |   |   |   |   |   generate-routes-manifest.d.ts
 |   |   |   |   |   generate-routes-manifest.js
 |   |   |   |   |   generate-routes-manifest.js.map
@@ -17199,9 +17105,6 @@ C:.
 |   |   |   |   |   preview-key-utils.d.ts
 |   |   |   |   |   preview-key-utils.js
 |   |   |   |   |   preview-key-utils.js.map
-|   |   |   |   |   print-build-errors.d.ts
-|   |   |   |   |   print-build-errors.js
-|   |   |   |   |   print-build-errors.js.map
 |   |   |   |   |   progress.d.ts
 |   |   |   |   |   progress.js
 |   |   |   |   |   progress.js.map
@@ -17235,14 +17138,8 @@ C:.
 |   |   |   |   |   worker.d.ts
 |   |   |   |   |   worker.js
 |   |   |   |   |   worker.js.map
-|   |   |   |   |   write-build-id.d.ts
-|   |   |   |   |   write-build-id.js
-|   |   |   |   |   write-build-id.js.map
 |   |   |   |   |   
 |   |   |   |   +---adapter
-|   |   |   |   |       build-complete.d.ts
-|   |   |   |   |       build-complete.js
-|   |   |   |   |       build-complete.js.map
 |   |   |   |   |       setup-node-env.external.d.ts
 |   |   |   |   |       setup-node-env.external.js
 |   |   |   |   |       setup-node-env.external.js.map
@@ -17499,7 +17396,6 @@ C:.
 |   |   |   |   |       index.js
 |   |   |   |   |       index.js.map
 |   |   |   |   |       
-|   |   |   |   +---turbopack-build
 |   |   |   |   |       impl.d.ts
 |   |   |   |   |       impl.js
 |   |   |   |   |       impl.js.map
@@ -17609,9 +17505,6 @@ C:.
 |   |   |   |   |   |   |   error-loader.d.ts
 |   |   |   |   |   |   |   error-loader.js
 |   |   |   |   |   |   |   error-loader.js.map
-|   |   |   |   |   |   |   get-module-build-info.d.ts
-|   |   |   |   |   |   |   get-module-build-info.js
-|   |   |   |   |   |   |   get-module-build-info.js.map
 |   |   |   |   |   |   |   modularize-import-loader.d.ts
 |   |   |   |   |   |   |   modularize-import-loader.js
 |   |   |   |   |   |   |   modularize-import-loader.js.map
@@ -17856,12 +17749,6 @@ C:.
 |   |   |   |   |   |               value-processor.js.map
 |   |   |   |   |   |               
 |   |   |   |   |   \---plugins
-|   |   |   |   |       |   build-manifest-plugin-utils.d.ts
-|   |   |   |   |       |   build-manifest-plugin-utils.js
-|   |   |   |   |       |   build-manifest-plugin-utils.js.map
-|   |   |   |   |       |   build-manifest-plugin.d.ts
-|   |   |   |   |       |   build-manifest-plugin.js
-|   |   |   |   |       |   build-manifest-plugin.js.map
 |   |   |   |   |       |   copy-file-plugin.d.ts
 |   |   |   |   |       |   copy-file-plugin.js
 |   |   |   |   |       |   copy-file-plugin.js.map
@@ -17998,7 +17885,6 @@ C:.
 |   |   |   |   |               webpackModuleError.js
 |   |   |   |   |               webpackModuleError.js.map
 |   |   |   |   |               
-|   |   |   |   +---webpack-build
 |   |   |   |   |       impl.d.ts
 |   |   |   |   |       impl.js
 |   |   |   |   |       impl.js.map
@@ -18036,7 +17922,6 @@ C:.
 |   |   |   |   |       |       turbopack-03041747c8de0c84.js
 |   |   |   |   |       |       
 |   |   |   |   |       \---xR78HbVQBty3GRl-Ydf7i
-|   |   |   |   |               _buildManifest.js
 |   |   |   |   |               _clientMiddlewareManifest.json
 |   |   |   |   |               _ssgManifest.js
 |   |   |   |   |               
@@ -18052,9 +17937,6 @@ C:.
 |   |   |   |   |   next-analyze.d.ts
 |   |   |   |   |   next-analyze.js
 |   |   |   |   |   next-analyze.js.map
-|   |   |   |   |   next-build.d.ts
-|   |   |   |   |   next-build.js
-|   |   |   |   |   next-build.js.map
 |   |   |   |   |   next-dev.d.ts
 |   |   |   |   |   next-dev.js
 |   |   |   |   |   next-dev.js.map
@@ -18158,9 +18040,6 @@ C:.
 |   |   |   |   |   link.d.ts
 |   |   |   |   |   link.js
 |   |   |   |   |   link.js.map
-|   |   |   |   |   navigation-build-id.d.ts
-|   |   |   |   |   navigation-build-id.js
-|   |   |   |   |   navigation-build-id.js.map
 |   |   |   |   |   next-dev-turbopack.d.ts
 |   |   |   |   |   next-dev-turbopack.js
 |   |   |   |   |   next-dev-turbopack.js.map
@@ -18976,7 +18855,6 @@ C:.
 |   |   |   |   |   +---font
 |   |   |   |   |   |   |   package.json
 |   |   |   |   |   |   |   
-|   |   |   |   |   |   +---dist
 |   |   |   |   |   |   |   |   constants.d.ts
 |   |   |   |   |   |   |   |   constants.js
 |   |   |   |   |   |   |   |   format-available-values.d.ts
@@ -19045,7 +18923,6 @@ C:.
 |   |   |   |   |   |           loader.js
 |   |   |   |   |   |           
 |   |   |   |   |   \---react-refresh-utils
-|   |   |   |   |       \---dist
 |   |   |   |   |           |   loader.js
 |   |   |   |   |           |   loader.js.map
 |   |   |   |   |           |   ReactRefreshRspackPlugin.js
@@ -19464,14 +19341,6 @@ C:.
 |   |   |   |   |       app-route.runtime.dev.js.map
 |   |   |   |   |       app-route.runtime.prod.js
 |   |   |   |   |       app-route.runtime.prod.js.map
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js-experimental.runtime.dev.js
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js-experimental.runtime.dev.js.map
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js-turbo-experimental.runtime.dev.js
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js-turbo-experimental.runtime.dev.js.map
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js-turbo.runtime.dev.js
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js-turbo.runtime.dev.js.map
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js.runtime.dev.js
-|   |   |   |   |       dist_client_dev_noop-turbopack-hmr_js.runtime.dev.js.map
 |   |   |   |   |       pages-api-turbo.runtime.dev.js
 |   |   |   |   |       pages-api-turbo.runtime.dev.js.map
 |   |   |   |   |       pages-api-turbo.runtime.prod.js
@@ -20148,11 +20017,6 @@ C:.
 |   |   |   |           package.json
 |   |   |   |           
 |   |   |   +---diagnostics
-|   |   |   |       build-diagnostics.d.ts
-|   |   |   |       build-diagnostics.js
-|   |   |   |       build-diagnostics.js.map
-|   |   |   |       build-diagnostics.test.js
-|   |   |   |       build-diagnostics.test.js.map
 |   |   |   |       
 |   |   |   +---docs
 |   |   |   |   |   index.md
@@ -20189,7 +20053,6 @@ C:.
 |   |   |   |   |   |   |   backend-for-frontend.md
 |   |   |   |   |   |   |   caching-without-cache-components.md
 |   |   |   |   |   |   |   cdn-caching.md
-|   |   |   |   |   |   |   ci-build-caching.md
 |   |   |   |   |   |   |   content-security-policy.md
 |   |   |   |   |   |   |   css-in-js.md
 |   |   |   |   |   |   |   custom-server.md
@@ -20378,11 +20241,9 @@ C:.
 |   |   |   |   |       |           cssChunking.md
 |   |   |   |   |       |           deploymentId.md
 |   |   |   |   |       |           devIndicators.md
-|   |   |   |   |       |           distDir.md
 |   |   |   |   |       |           env.md
 |   |   |   |   |       |           expireTime.md
 |   |   |   |   |       |           exportPathMap.md
-|   |   |   |   |       |           generateBuildId.md
 |   |   |   |   |       |           generateEtags.md
 |   |   |   |   |       |           headers.md
 |   |   |   |   |       |           htmlLimitedBots.md
@@ -20462,7 +20323,6 @@ C:.
 |   |   |   |   |   |   |   analytics.md
 |   |   |   |   |   |   |   authentication.md
 |   |   |   |   |   |   |   babel.md
-|   |   |   |   |   |   |   ci-build-caching.md
 |   |   |   |   |   |   |   content-security-policy.md
 |   |   |   |   |   |   |   css-in-js.md
 |   |   |   |   |   |   |   custom-server.md
@@ -20513,7 +20373,6 @@ C:.
 |   |   |   |   |   |           version-14.md
 |   |   |   |   |   |           version-9.md
 |   |   |   |   |   |           
-|   |   |   |   |   +---03-building-your-application
 |   |   |   |   |   |   |   index.md
 |   |   |   |   |   |   |   
 |   |   |   |   |   |   +---01-routing
@@ -20595,10 +20454,8 @@ C:.
 |   |   |   |   |       |           crossOrigin.md
 |   |   |   |   |       |           deploymentId.md
 |   |   |   |   |       |           devIndicators.md
-|   |   |   |   |       |           distDir.md
 |   |   |   |   |       |           env.md
 |   |   |   |   |       |           exportPathMap.md
-|   |   |   |   |       |           generateBuildId.md
 |   |   |   |   |       |           generateEtags.md
 |   |   |   |   |       |           headers.md
 |   |   |   |   |       |           httpAgentOptions.md
@@ -20696,13 +20553,8 @@ C:.
 |   |   |   |   |       server.js
 |   |   |   |   |       server.js.map
 |   |   |   |   |       
-|   |   |   |   +---build
 |   |   |   |   |   |   after-production-compile.js
 |   |   |   |   |   |   after-production-compile.js.map
-|   |   |   |   |   |   build-context.js
-|   |   |   |   |   |   build-context.js.map
-|   |   |   |   |   |   collect-build-traces.js
-|   |   |   |   |   |   collect-build-traces.js.map
 |   |   |   |   |   |   compiler.js
 |   |   |   |   |   |   compiler.js.map
 |   |   |   |   |   |   create-compiler-aliases.js
@@ -20715,8 +20567,6 @@ C:.
 |   |   |   |   |   |   entries.js.map
 |   |   |   |   |   |   file-classifier.js
 |   |   |   |   |   |   file-classifier.js.map
-|   |   |   |   |   |   generate-build-id.js
-|   |   |   |   |   |   generate-build-id.js.map
 |   |   |   |   |   |   generate-routes-manifest.js
 |   |   |   |   |   |   generate-routes-manifest.js.map
 |   |   |   |   |   |   get-babel-config-file.js
@@ -20749,8 +20599,6 @@ C:.
 |   |   |   |   |   |   page-extensions-type.js.map
 |   |   |   |   |   |   preview-key-utils.js
 |   |   |   |   |   |   preview-key-utils.js.map
-|   |   |   |   |   |   print-build-errors.js
-|   |   |   |   |   |   print-build-errors.js.map
 |   |   |   |   |   |   progress.js
 |   |   |   |   |   |   progress.js.map
 |   |   |   |   |   |   rendering-mode.js
@@ -20773,12 +20621,8 @@ C:.
 |   |   |   |   |   |   webpack-config.js.map
 |   |   |   |   |   |   worker.js
 |   |   |   |   |   |   worker.js.map
-|   |   |   |   |   |   write-build-id.js
-|   |   |   |   |   |   write-build-id.js.map
 |   |   |   |   |   |   
 |   |   |   |   |   +---adapter
-|   |   |   |   |   |       build-complete.js
-|   |   |   |   |   |       build-complete.js.map
 |   |   |   |   |   |       setup-node-env.external.js
 |   |   |   |   |   |       setup-node-env.external.js.map
 |   |   |   |   |   |       
@@ -20949,7 +20793,6 @@ C:.
 |   |   |   |   |   |       index.js
 |   |   |   |   |   |       index.js.map
 |   |   |   |   |   |       
-|   |   |   |   |   +---turbopack-build
 |   |   |   |   |   |       impl.js
 |   |   |   |   |   |       impl.js.map
 |   |   |   |   |   |       index.js
@@ -21030,8 +20873,6 @@ C:.
 |   |   |   |   |   |   |   |   empty-loader.js.map
 |   |   |   |   |   |   |   |   error-loader.js
 |   |   |   |   |   |   |   |   error-loader.js.map
-|   |   |   |   |   |   |   |   get-module-build-info.js
-|   |   |   |   |   |   |   |   get-module-build-info.js.map
 |   |   |   |   |   |   |   |   modularize-import-loader.js
 |   |   |   |   |   |   |   |   modularize-import-loader.js.map
 |   |   |   |   |   |   |   |   next-barrel-loader.js
@@ -21209,10 +21050,6 @@ C:.
 |   |   |   |   |   |   |               value-processor.js.map
 |   |   |   |   |   |   |               
 |   |   |   |   |   |   \---plugins
-|   |   |   |   |   |       |   build-manifest-plugin-utils.js
-|   |   |   |   |   |       |   build-manifest-plugin-utils.js.map
-|   |   |   |   |   |       |   build-manifest-plugin.js
-|   |   |   |   |   |       |   build-manifest-plugin.js.map
 |   |   |   |   |   |       |   copy-file-plugin.js
 |   |   |   |   |   |       |   copy-file-plugin.js.map
 |   |   |   |   |   |       |   css-chunking-plugin.js
@@ -21307,7 +21144,6 @@ C:.
 |   |   |   |   |   |               webpackModuleError.js
 |   |   |   |   |   |               webpackModuleError.js.map
 |   |   |   |   |   |               
-|   |   |   |   |   +---webpack-build
 |   |   |   |   |   |       impl.js
 |   |   |   |   |   |       impl.js.map
 |   |   |   |   |   |       index.js
@@ -21366,8 +21202,6 @@ C:.
 |   |   |   |   |   |   index.js.map
 |   |   |   |   |   |   link.js
 |   |   |   |   |   |   link.js.map
-|   |   |   |   |   |   navigation-build-id.js
-|   |   |   |   |   |   navigation-build-id.js.map
 |   |   |   |   |   |   next-dev-turbopack.js
 |   |   |   |   |   |   next-dev-turbopack.js.map
 |   |   |   |   |   |   next-dev.js
@@ -21746,8 +21580,6 @@ C:.
 |   |   |   |   +---lib
 |   |   |   |   |   |   batcher.js
 |   |   |   |   |   |   batcher.js.map
-|   |   |   |   |   |   build-custom-route.js
-|   |   |   |   |   |   build-custom-route.js.map
 |   |   |   |   |   |   bundler.js
 |   |   |   |   |   |   bundler.js.map
 |   |   |   |   |   |   client-and-server-references.js
@@ -21862,8 +21694,6 @@ C:.
 |   |   |   |   |   |   redirect-status.js.map
 |   |   |   |   |   |   require-instrumentation-client.js
 |   |   |   |   |   |   require-instrumentation-client.js.map
-|   |   |   |   |   |   resolve-build-paths.js
-|   |   |   |   |   |   resolve-build-paths.js.map
 |   |   |   |   |   |   resolve-from.js
 |   |   |   |   |   |   resolve-from.js.map
 |   |   |   |   |   |   route-pattern-normalizer.js
@@ -22605,10 +22435,6 @@ C:.
 |   |   |   |   |   |   +---router-utils
 |   |   |   |   |   |   |       block-cross-site-dev.js
 |   |   |   |   |   |   |       block-cross-site-dev.js.map
-|   |   |   |   |   |   |       build-data-route.js
-|   |   |   |   |   |   |       build-data-route.js.map
-|   |   |   |   |   |   |       build-prefetch-segment-data-route.js
-|   |   |   |   |   |   |       build-prefetch-segment-data-route.js.map
 |   |   |   |   |   |   |       cache-life-type-utils.js
 |   |   |   |   |   |   |       cache-life-type-utils.js.map
 |   |   |   |   |   |   |       decode-path-params.js
@@ -23594,9 +23420,6 @@ C:.
 |   |   |   |   |   batcher.d.ts
 |   |   |   |   |   batcher.js
 |   |   |   |   |   batcher.js.map
-|   |   |   |   |   build-custom-route.d.ts
-|   |   |   |   |   build-custom-route.js
-|   |   |   |   |   build-custom-route.js.map
 |   |   |   |   |   bundler.d.ts
 |   |   |   |   |   bundler.js
 |   |   |   |   |   bundler.js.map
@@ -23767,9 +23590,6 @@ C:.
 |   |   |   |   |   require-instrumentation-client.d.ts
 |   |   |   |   |   require-instrumentation-client.js
 |   |   |   |   |   require-instrumentation-client.js.map
-|   |   |   |   |   resolve-build-paths.d.ts
-|   |   |   |   |   resolve-build-paths.js
-|   |   |   |   |   resolve-build-paths.js.map
 |   |   |   |   |   resolve-from.d.ts
 |   |   |   |   |   resolve-from.js
 |   |   |   |   |   resolve-from.js.map
@@ -24138,7 +23958,6 @@ C:.
 |   |   |   |   |   |           version-staleness-info.d.ts
 |   |   |   |   |   |           
 |   |   |   |   |   +---container
-|   |   |   |   |   |   |   build-error.d.ts
 |   |   |   |   |   |   |   errors.d.ts
 |   |   |   |   |   |   |   
 |   |   |   |   |   |   \---runtime-error
@@ -25057,12 +24876,6 @@ C:.
 |   |   |   |   |   |       block-cross-site-dev.d.ts
 |   |   |   |   |   |       block-cross-site-dev.js
 |   |   |   |   |   |       block-cross-site-dev.js.map
-|   |   |   |   |   |       build-data-route.d.ts
-|   |   |   |   |   |       build-data-route.js
-|   |   |   |   |   |       build-data-route.js.map
-|   |   |   |   |   |       build-prefetch-segment-data-route.d.ts
-|   |   |   |   |   |       build-prefetch-segment-data-route.js
-|   |   |   |   |   |       build-prefetch-segment-data-route.js.map
 |   |   |   |   |   |       cache-life-type-utils.d.ts
 |   |   |   |   |   |       cache-life-type-utils.js
 |   |   |   |   |   |       cache-life-type-utils.js.map
@@ -26322,9 +26135,6 @@ C:.
 |   |   |   |   |   storage.js.map
 |   |   |   |   |   
 |   |   |   |   \---events
-|   |   |   |           build.d.ts
-|   |   |   |           build.js
-|   |   |   |           build.js.map
 |   |   |   |           error-feedback.d.ts
 |   |   |   |           error-feedback.js
 |   |   |   |           error-feedback.js.map
@@ -26377,9 +26187,6 @@ C:.
 |   |   |               index.js.map
 |   |   |               index.test.js
 |   |   |               index.test.js.map
-|   |   |               to-json-build.d.ts
-|   |   |               to-json-build.js
-|   |   |               to-json-build.js.map
 |   |   |               to-json.d.ts
 |   |   |               to-json.js
 |   |   |               to-json.js.map
@@ -26699,7 +26506,6 @@ C:.
 |   |   |   
 |   |   |       FUNDING.yml
 |   |   |       
-|   |   +---dist
 |   |   |       browser.js
 |   |   |       
 |   |   \---test
@@ -26835,12 +26641,10 @@ C:.
 |   |       package.json
 |   |       readme.md
 |   |       
-|   +---package-json-from-dist
 |   |   |   LICENSE.md
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       +---commonjs
 |   |       |       index.d.ts
 |   |       |       index.d.ts.map
@@ -26886,7 +26690,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |   +---commonjs
 |   |   |   |       index.d.ts
 |   |   |   |       index.d.ts.map
@@ -26906,7 +26709,6 @@ C:.
 |   |           |   package.json
 |   |           |   README.md
 |   |           |   
-|   |           \---dist
 |   |               +---commonjs
 |   |               |       index.d.ts
 |   |               |       index.d.ts.map
@@ -27071,7 +26873,6 @@ C:.
 |   |   |       SECURITY.md
 |   |   |       THREAT_MODEL.md
 |   |   |       
-|   |   +---dist
 |   |   |       qs.js
 |   |   |       
 |   |   +---lib
@@ -27173,7 +26974,6 @@ C:.
 |   |           react-dom.react-server.production.js
 |   |           
 |   +---react-is
-|   |   |   build-info.json
 |   |   |   index.js
 |   |   |   LICENSE
 |   |   |   package.json
@@ -27460,7 +27260,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           index.cjs
 |   |           index.d.cts
 |   |           index.d.mts
@@ -27492,7 +27291,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       +---commonjs
 |   |       |       default-tmp.d.ts
 |   |       |       default-tmp.d.ts.map
@@ -27774,7 +27572,6 @@ C:.
 |   |   |   README.md
 |   |   |   
 |   |   +---install
-|   |   |       build.js
 |   |   |       check.js
 |   |   |       
 |   |   +---lib
@@ -27819,7 +27616,6 @@ C:.
 |   |   |       |       clean.js
 |   |   |       |       cmp.js
 |   |   |       |       coerce.js
-|   |   |       |       compare-build.js
 |   |   |       |       compare-loose.js
 |   |   |       |       compare.js
 |   |   |       |       diff.js
@@ -27966,7 +27762,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |       +---cjs
 |   |       |       browser.d.ts
 |   |       |       browser.d.ts.map
@@ -28023,7 +27818,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           index.d.ts
 |   |           index.js
 |   |           index.mjs
@@ -28260,7 +28054,6 @@ C:.
 |   |   |   style.js
 |   |   |   webpack.js
 |   |   |   
-|   |   +---dist
 |   |   |   +---babel
 |   |   |   |       index.js
 |   |   |   |       
@@ -28305,7 +28098,6 @@ C:.
 |   |   |   theme.css
 |   |   |   utilities.css
 |   |   |   
-|   |   \---dist
 |   |           chunk-5JIJA4QV.mjs
 |   |           chunk-C2OYBFIH.mjs
 |   |           chunk-DCG7AFIE.mjs
@@ -28363,7 +28155,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |       index.cjs
 |   |   |       index.d.cts
 |   |   |       index.d.mts
@@ -28374,7 +28165,6 @@ C:.
 |   |       |   |   package.json
 |   |       |   |   README.md
 |   |       |   |   
-|   |       |   \---dist
 |   |       |           index.cjs
 |   |       |           index.d.cts
 |   |       |           index.d.mts
@@ -28488,7 +28278,6 @@ C:.
 |   |   |       |   package.json
 |   |   |       |   README.md
 |   |   |       |   
-|   |   |       +---dist
 |   |   |       |       index.js
 |   |   |       |       
 |   |   |       \---lib
@@ -28787,7 +28576,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   \---dist
 |   |           compatibility-types.d.ts
 |   |           compatibility-types.js
 |   |           config-helper.d.ts
@@ -28881,7 +28669,6 @@ C:.
 |   |   |   README.md
 |   |   |   yarn.lock
 |   |   |   
-|   |   \---dist
 |   |       +---es5
 |   |       |       uri.all.d.ts
 |   |       |       uri.all.js
@@ -28958,7 +28745,6 @@ C:.
 |   |   |   package.json
 |   |   |   README.md
 |   |   |   
-|   |   +---dist
 |   |   |   |   polyfill.es2018.js
 |   |   |   |   polyfill.es2018.js.map
 |   |   |   |   polyfill.es2018.min.js
