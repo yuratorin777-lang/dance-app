@@ -679,6 +679,69 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
+      // --- 3. ОБРАБОТКА ВЫБОРА ДАТЫ ПЕРЕНОСА (РОДИТЕЛЬ ИЛИ АДМИН) ---
+      if (callbackData.startsWith('resched_day_parent:') || callbackData.startsWith('resched_day_admin:')) {
+        const parts = callbackData.split(':');
+        const isParent = callbackData.startsWith('resched_day_parent:');
+        const leadId = parts[1];
+        const newDate = parts[2];
+
+        if (googleScriptUrl) {
+          await callAppsScript(googleScriptUrl, {
+            action: 'reschedule_trial',
+            lead_id: leadId,
+            new_date: newDate,
+            rescheduled_by: isParent ? 'parent' : 'admin'
+          });
+        }
+
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+
+        if (adminChatId) {
+          const rescheduleNoticeText = 
+            `📅 <b>ПЕРЕНОС ПРОБНОГО ЗАНЯТИЯ</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `📆 <b>Новая дата:</b> <code>${newDate}</code>\n` +
+            `👤 <b>Кем перенесено:</b> ${isParent ? 'Родитель (через бота)' : 'Администратор'}`;
+
+          // Отправка информации о переносе в Топик 6 (Алярмы/Переносы)
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 6,
+              text: rescheduleNoticeText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending reschedule to Topic 6:', err));
+        }
+
+        const userConfirmationText = isParent
+          ? `📅 <b>Спасибо! Ваше занятие перенесено на ${newDate}.</b>\n\nМы отправим вам напоминание накануне!`
+          : `✅ <b>Занятие успешно перенесено на ${newDate}</b> (ID: <code>${leadId}</code>)`;
+
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: userConfirmationText,
+            parse_mode: 'HTML',
+            reply_markup: isParent && typeof getInfoMenuKeyboard === 'function' ? getInfoMenuKeyboard() : { inline_keyboard: [] }
+          })
+        });
+
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Перенос оформлен!' })
+        });
+
+        return NextResponse.json({ ok: true });
+      }
+
       // 📌 SECTION 4: ADMIN WORKSPACE FLOW
       if (callbackData.startsWith('assign_lesson:')) {
         const leadId = callbackData.split(':')[1];
