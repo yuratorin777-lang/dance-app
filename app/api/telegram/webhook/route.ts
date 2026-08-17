@@ -613,37 +613,26 @@ export async function POST(req: NextRequest) {
         const leadId = callbackData.split(':')[1];
         const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        let leadDetails: any = null;
+        // 1. Извлекаем ИСХОДНЫЙ текст сообщения, на котором нажали кнопку (Вся карточка клиента)
+        const originalText = callbackQuery.message?.text || '';
 
+        // 2. Отправляем запрос в Apps Script (просто чтобы обновить статус в таблице)
         if (googleScriptUrl) {
-          const data = await callAppsScript(googleScriptUrl, {
+          callAppsScript(googleScriptUrl, {
             action: 'confirm_attendance',
             lead_id: leadId,
             is_confirmed: isAdminConfirm
-          });
-
-          if (data) {
-            leadDetails = data.lead || data.result || (data.parentName ? data : null);
-          }
+          }).catch(err => console.error('Apps Script update error:', err));
         }
 
-        const parentName = leadDetails?.parentName || leadDetails?.parent_name || leadDetails?.['Имя родителя'] || leadDetails?.parent || '—';
-        const childName = leadDetails?.childName || leadDetails?.child_name || leadDetails?.['Имя ребенка'] || leadDetails?.child || '—';
-        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || leadDetails?.phone_number || '—';
-
+        // 3. Отправляем ТУ ЖЕ САМУЮ КАРТОЧКУ в нужный топик (74 или 6)
         if (adminChatId) {
           const targetTopicId = isAdminConfirm ? 74 : 6;
-          const adminNoticeText = isAdminConfirm
-            ? `✅ <b>ПОДТВЕРЖДЕНО (ОТМЕЧЕНО АДМИНОМ)</b>\n\n` +
-              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              `👤 <b>Родитель:</b> ${parentName}\n` +
-              `👶 <b>Ребенок:</b> ${childName}\n` +
-              `📞 <b>Телефон:</b> ${phone}`
-            : `🚨 <b>ОТМЕНА/ПЕРЕНОС (ОТМЕЧЕНО АДМИНОМ)</b>\n\n` +
-              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-              `👤 <b>Родитель:</b> ${parentName}\n` +
-              `👶 <b>Ребенок:</b> ${childName}\n` +
-              `📞 <b>Телефон:</b> ${phone}`;
+          const statusHeader = isAdminConfirm 
+            ? `✅ <b>ПОДТВЕРЖДЕНО (ОТМЕЧЕНО АДМИНОМ)</b>\n\n`
+            : `🚨 <b>ОТМЕНА/ПЕРЕНОС (ОТМЕЧЕНО АДМИНОМ)</b>\n\n`;
+
+          const noticeText = statusHeader + originalText;
 
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
@@ -651,20 +640,24 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               chat_id: adminChatId,
               message_thread_id: targetTopicId,
-              text: adminNoticeText,
+              text: noticeText,
               parse_mode: 'HTML'
             })
           }).catch(err => console.error(`Error sending to Topic ${targetTopicId}:`, err));
         }
 
-        // Обновляем сообщение в топике 3, убирая интерактивные кнопки
+        // 4. Обновляем сообщение в Топике 3: добавляем плашку сверху, сохраняем карточку клиента и убираем кнопки
+        const updatedTopic3Text = 
+          (isAdminConfirm ? `✅ <b>ПОДТВЕРЖДЕНО АДМИНИСТРАТОРОМ</b>\n\n` : `🚨 <b>ОТМЕНЕНО / ПЕРЕНОС (АДМИН)</b>\n\n`) + 
+          originalText;
+
         await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
             message_id: messageId,
-            text: (isAdminConfirm ? '✅ <b>Подтверждено администратором</b>' : '🚨 <b>Отменено/Перенос (отмечено админом)</b>') + `\n🆔 ID: <code>${leadId}</code>`,
+            text: updatedTopic3Text,
             parse_mode: 'HTML',
             reply_markup: { inline_keyboard: [] }
           })
