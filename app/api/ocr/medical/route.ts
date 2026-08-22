@@ -27,6 +27,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 1. Распознавание документа через Gemini AI
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: [
@@ -56,10 +57,12 @@ export async function POST(req: Request) {
       });
     }
 
-    // Передаем период заморозки в GAS
-    let gasResult = null;
-    if (process.env.GAS_WEBHOOK_URL) {
-      const gasResponse = await fetch(process.env.GAS_WEBHOOK_URL, {
+    // 2. Отправка данных в Google Apps Script (GAS)
+    let gasResult: any = null;
+    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL; // <-- ИСПРАВЛЕННОЕ ИМЯ ПЕРЕМЕННОЙ
+
+    if (gasUrl) {
+      const gasResponse = await fetch(gasUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -73,6 +76,27 @@ export async function POST(req: Request) {
       });
 
       gasResult = await gasResponse.json();
+    }
+
+    // 3. Отправка уведомления в Telegram (в topic_medical_id группы)
+    if (gasResult && gasResult.chat_id && gasResult.topic_medical_id && process.env.TELEGRAM_BOT_TOKEN) {
+      const tgText = 
+        `🏥 *МЕДИЦИНСКАЯ СПРАВКА / ЗАМОРОЗКА*\n\n` +
+        `👤 *Ученик:* ${extractedData.child_name || 'Не указан'}\n` +
+        `📅 *Период:* с ${extractedData.start_date} по ${extractedData.end_date}\n` +
+        `❄️ *Дней заморозки:* ${gasResult.days_frozen || '—'}\n` +
+        `📝 *Диагноз/Причина:* ${extractedData.diagnosis || 'Не указан'}`;
+
+      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: gasResult.chat_id,
+          message_thread_id: gasResult.topic_medical_id, // ID топика из колонки L таблицы groups
+          text: tgText,
+          parse_mode: 'Markdown',
+        }),
+      });
     }
 
     return NextResponse.json({

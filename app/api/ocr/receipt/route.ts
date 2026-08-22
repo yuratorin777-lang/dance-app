@@ -63,10 +63,12 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Отправка данных в Google Apps Script Webhook (если настроен)
-    let gasResult = null;
-    if (process.env.GAS_WEBHOOK_URL) {
-      const gasResponse = await fetch(process.env.GAS_WEBHOOK_URL, {
+    // 2. Отправка данных в Google Apps Script (GAS)
+    let gasResult: any = null;
+    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL; // <-- ИСПРАВЛЕННОЕ ИМЯ ПЕРЕМЕННОЙ
+
+    if (gasUrl) {
+      const gasResponse = await fetch(gasUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -81,6 +83,34 @@ export async function POST(req: Request) {
       });
 
       gasResult = await gasResponse.json();
+    }
+
+    // 3. Отправка карточки оплаты в Telegram (в topic_payments_id или общий чат группы)
+    if (gasResult && gasResult.chat_id && process.env.TELEGRAM_BOT_TOKEN) {
+      const tgText = 
+        `💳 *ПОСТУПИЛА ОПЛАТА ПО ЧЕКУ*\n\n` +
+        `💰 *Сумма:* ${extractedData.amount || 0} ₽\n` +
+        `👤 *Отправитель:* ${extractedData.sender_name || 'Не указан'}\n` +
+        `🕒 *Дата/Время:* ${extractedData.timestamp || '—'}\n` +
+        `➕ *Начислено занятий:* ${gasResult.classes_added || 0}\n` +
+        `🆔 *ID Платежа:* \`${gasResult.payment_id || '—'}\``;
+
+      const payload: Record<string, any> = {
+        chat_id: gasResult.chat_id,
+        text: tgText,
+        parse_mode: 'Markdown',
+      };
+
+      // Если в GAS передается ID топика оплат — отправляем в топик
+      if (gasResult.topic_payments_id) {
+        payload.message_thread_id = gasResult.topic_payments_id;
+      }
+
+      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
     }
 
     return NextResponse.json({
