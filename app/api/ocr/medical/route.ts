@@ -15,6 +15,10 @@ const medicalSchema: Schema = {
   required: ['child_name', 'start_date', 'end_date', 'is_valid'],
 };
 
+export async function import { NextResponse } from 'next/server';
+import { ai } from '@/lib/ai'; // Замени импорт аи, если у тебя он в другом месте (например, import { GoogleGenAI } from '@google/genai')
+import { medicalSchema } from './schema'; // Импорт твоей схемы schema
+
 export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
   // Универсальная очистка base64 от любого MIME-префикса
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
@@ -30,9 +34,18 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
       },
       {
         text: `Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).
+
+КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ДЛЯ ИМЕНИ РЕБЕНКА (child_name):
+В справках имя почти всегда написано в ДАТЕЛЬНОМ или РОДИТЕЛЬНОМ падеже (например: "Миляевой Дарине", "Иванову Пётру", "Сидоровой Марии").
+Ты ОБЯЗАН автоматически приводить ФИО ребенка к ИМЕНИТЕЛЬНОМУ ПАДЕЖУ (Кто? Что?)!
+Примеры:
+- "Миляевой Дарине" -> "Миляева Дарина"
+- "Миляевой Дарины" -> "Миляева Дарина"
+- "Иванову Петру" -> "Иванов Петр"
+- "Сидоровой Марии" -> "Сидорова Мария"
+
 Дополнительно тебе дана подпись к справке от пользователя: "${caption}".
-Если из документа сложно понять ФИО, используй имя из подписи.
-Формат ответа — строго по JSON schema.`,
+Если из документа сложно понять ФИО или на документе опечатка, корректируй имя, используя подпись пользователя.`,
       },
     ],
     config: {
@@ -76,7 +89,7 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           action: 'APPLY_FREEZE',
           studentId: studentId || null,
-          searchQuery: caption || extractedData.child_name || '',
+          searchQuery: extractedData.child_name || caption || '',
           startDate: extractedData.start_date,
           endDate: extractedData.end_date,
           reason: extractedData.diagnosis,
