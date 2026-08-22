@@ -245,7 +245,19 @@ export async function POST(req: NextRequest) {
       const threadId = update.message.message_thread_id;
       const caption = (update.message.caption || '').trim();
 
-      if (!caption) {
+      const fileName = update.message.document?.file_name || '';
+      const lowerCaption = caption.toLowerCase();
+      const lowerFileName = fileName.toLowerCase();
+
+      // Определение флага справки (по тексту подписи, имени файла или ID топика)
+      let isMedical = lowerCaption.includes('справка') || 
+                      lowerCaption.includes('больничный') || 
+                      lowerFileName.includes('справка') || 
+                      lowerFileName.includes('больничный') ||
+                      (process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID));
+
+      // Требуем подпись только для чеков. Для справок подпись опциональна!
+      if (!caption && !isMedical) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -253,7 +265,7 @@ export async function POST(req: NextRequest) {
             chat_id: chatId,
             ...(threadId ? { message_thread_id: threadId } : {}),
             reply_to_message_id: update.message.message_id,
-            text: '⚠️ Пожалуйста, добавьте подпись к фото с Фамилиией и Именем ребенка (например: <i>Иванова Маша</i>).',
+            text: '⚠️ Пожалуйста, добавьте подпись к фото с Фамилией и Именем ребенка (например: <i>Иванова Маша</i>).',
             parse_mode: 'HTML'
           })
         });
@@ -282,20 +294,27 @@ export async function POST(req: NextRequest) {
 
       const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
       const studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
-      const isMedical = caption.toLowerCase().includes('справка') || caption.toLowerCase().includes('больничный');
 
       // 1. ОПРЕДЕЛЯЕМ MIME-ТИП (для PDF передаём application/pdf, для фото — image/jpeg)
       const mimeType = update.message.document?.mime_type || 'image/jpeg';
 
       let ocrData: any = null;
 
-      // 2. Распознавание через Gemini с передачей mimeType и caption
+      // 2. Распознавание через Gemini
       if (imageBase64) {
         try {
           if (isMedical) {
-            ocrData = await analyzeMedicalDoc(imageBase64, mimeType);
+            ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
           } else {
-            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+            // Умная проверка: если подпись не указала явно чек, сначала проверяем на справку
+            const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+            
+            if (medicalCheck && medicalCheck.is_valid) {
+              ocrData = medicalCheck;
+              isMedical = true; // Автоматически переключаем тип на справку!
+            } else {
+              ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+            }
           }
         } catch (err) {
           console.error('Gemini OCR process error:', err);
@@ -309,6 +328,7 @@ export async function POST(req: NextRequest) {
           payload = {
             action: 'APPLY_FREEZE',
             studentId: studentId,
+            // ПРИОРИТЕТ: Подпись родителя -> Имя ребенка из справки
             searchQuery: caption || ocrData?.child_name || '',
             startDate: ocrData?.start_date || null,
             endDate: ocrData?.end_date || null,
@@ -322,7 +342,6 @@ export async function POST(req: NextRequest) {
           payload = {
             action: 'PROCESS_RECEIPT',
             studentId: studentId,
-            // ПРИОРИТЕТ: Сначала подпись родителя в Telegram (caption), а имя из чека — как фоллбэк
             searchQuery: caption || ocrData?.sender_name || '',
             amount: parsedAmount,
             classesAdded: Math.floor(parsedAmount / 500) || 8,
@@ -340,7 +359,8 @@ export async function POST(req: NextRequest) {
           const successText = isMedical 
             ? `🏥 <b>Справка принята!</b>\n` +
               `👤 Ученик: <b>${studentName}</b>\n` +
-              `📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>`
+              `📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>\n` +
+              `❄️ Дней продления: <b>${result.days_frozen || '—'}</b>`
             : `💳 <b>Оплата принята!</b>\n` +
               `👤 Ученик: <b>${studentName}</b>\n` +
               `💰 Сумма: <b>${payload.amount} ₽</b>\n` +
@@ -360,7 +380,7 @@ export async function POST(req: NextRequest) {
 
           return NextResponse.json({ ok: true });
         } else {
-          const errorMsg = result?.message || 'Не удалось найти ученика по указанной подписи. Проверьте ФИО.';
+          const errorMsg = result?.message || 'Не удалось найти ученика по указанной подписи или документу. Проверьте ФИО.';
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
