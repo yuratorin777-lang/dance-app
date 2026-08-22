@@ -6,7 +6,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const medicalSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    child_name: { type: Type.STRING, description: 'ФИО ребенка / пациента' },
+    child_name: { type: Type.STRING, description: 'ФИО ребенка / пациента в именительном падеже' },
     start_date: { type: Type.STRING, description: 'Дата начала освобождения/болезни (ГГГГ-ММ-ДД)' },
     end_date: { type: Type.STRING, description: 'Дата окончания освобождения/болезни (ГГГГ-ММ-ДД)' },
     diagnosis: { type: Type.STRING, description: 'Диагноз или причина освобождения (при наличии)' },
@@ -14,10 +14,6 @@ const medicalSchema: Schema = {
   },
   required: ['child_name', 'start_date', 'end_date', 'is_valid'],
 };
-
-export async function import { NextResponse } from 'next/server';
-import { ai } from '@/lib/ai'; // Замени импорт аи, если у тебя он в другом месте (например, import { GoogleGenAI } from '@google/genai')
-import { medicalSchema } from './schema'; // Импорт твоей схемы schema
 
 export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
   // Универсальная очистка base64 от любого MIME-префикса
@@ -37,7 +33,7 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 
 КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ДЛЯ ИМЕНИ РЕБЕНКА (child_name):
 В справках имя почти всегда написано в ДАТЕЛЬНОМ или РОДИТЕЛЬНОМ падеже (например: "Миляевой Дарине", "Иванову Пётру", "Сидоровой Марии").
-Ты ОБЯЗАН автоматически приводить ФИО ребенка к ИМЕНИТЕЛЬНОМУ ПАДЕЖУ (Кто? Что?)!
+Ты ОБЯЗАН автоматически переводить ФИО ребенка в ИМЕНИТЕЛЬНЫЙ ПАДЕЖ (Кто? Что?)!
 Примеры:
 - "Миляевой Дарине" -> "Миляева Дарина"
 - "Миляевой Дарины" -> "Миляева Дарина"
@@ -45,7 +41,8 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 - "Сидоровой Марии" -> "Сидорова Мария"
 
 Дополнительно тебе дана подпись к справке от пользователя: "${caption}".
-Если из документа сложно понять ФИО или на документе опечатка, корректируй имя, используя подпись пользователя.`,
+Если из документа сложно понять ФИО, используй имя из подписи.
+Формат ответа — строго по JSON schema.`,
       },
     ],
     config: {
