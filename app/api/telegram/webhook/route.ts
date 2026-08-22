@@ -225,16 +225,34 @@ export async function POST(req: NextRequest) {
     }
 
 // ------------------------------------------------------------------------
-    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ (ЧЕКИ И СПРАВКИ)
+    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ В ТОПИКАХ ГРУППЫ И ЛС
     // ------------------------------------------------------------------------
     if (update.message && (update.message.photo || update.message.document)) {
       const chatId = update.message.chat.id;
-      const caption = (update.message.caption || '').trim(); // В подписи к фото можно передать ID ученика
+      const threadId = update.message.message_thread_id; // ID топика
+      const caption = (update.message.caption || '').trim();
+
+      // Если вообще нет подписи к фото
+      if (!caption) {
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            ...(threadId ? { message_thread_id: threadId } : {}),
+            reply_to_message_id: update.message.message_id,
+            text: '⚠️ Пожалуйста, добавьте подпись к фото с Фамилией и Именем ребенка (например: <i>Иванова Маша</i>).',
+            parse_mode: 'HTML'
+          })
+        });
+        return NextResponse.json({ ok: true });
+      }
+      
       const fileId = update.message.photo 
         ? update.message.photo[update.message.photo.length - 1].file_id 
         : update.message.document?.file_id;
 
-      // 1. Получаем прямую ссылку на файл из Telegram API
+      // 1. Получаем ссылку на файл
       let fileUrl = '';
       if (fileId && botToken) {
         try {
@@ -248,78 +266,67 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Извлекаем ID ученика (из подписи к фото или текста сообщения)
+      // 2. Ищем ID (если есть) или берем весь текст подписи для поиска по ФИО
       const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
       const studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
 
-      // Определение типа документа (Чек на оплату или Справка)
       const isMedical = caption.toLowerCase().includes('справка') || caption.toLowerCase().includes('больничный');
 
-      if (studentId && googleScriptUrl) {
-        // Формируем payload для Google Apps Script
+      if (googleScriptUrl) {
         const payload = isMedical ? {
           action: 'APPLY_FREEZE',
-          studentId: studentId,
-          days: 7, // Можно передать дни или даты
-          fileUrl: fileUrl
+          studentId: studentId, // Передаст null, если ID нет
+          searchQuery: caption, // Текст подписи (например "Справка Соколов Егор")
+          days: 7,
+          fileUrl: fileUrl,
+          rawCaption: caption
         } : {
           action: 'PROCESS_RECEIPT',
           studentId: studentId,
-          amount: 4000, // В будущем здесь будет сумма из OCR
+          searchQuery: caption, // Текст подписи (например "Оплата за Иванову Машу")
+          amount: 4000,
           classesAdded: 8,
-          fileUrl: fileUrl
+          fileUrl: fileUrl,
+          rawCaption: caption
         };
 
-        // 2. Вызываем наш GAS
         const result = await callAppsScript(googleScriptUrl, payload);
 
         if (result && result.status === 'success') {
+          const studentName = result.student_name || result.studentId || 'ученика';
           const successText = isMedical 
-            ? `🏥 <b>Справка принята!</b>\n\nЗаморозка оформлена для ученика <code>${studentId}</code>.`
-            : `💳 <b>Оплата принята!</b>\n\nНачислено занятий: <b>${result.classes_added || 8}</b> для ученика <code>${studentId}</code>.`;
+            ? `🏥 <b>Справка принята!</b>\nЗаморозка оформлена для <b>${studentName}</b>.`
+            : `💳 <b>Оплата принята!</b>\nНачислено занятий: <b>${result.classes_added || 8}</b> для <b>${studentName}</b>.`;
 
-          // 3. Отвечаем родителю в чат
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
+              ...(threadId ? { message_thread_id: threadId } : {}),
+              reply_to_message_id: update.message.message_id,
               text: successText,
               parse_mode: 'HTML'
             })
           });
 
-          // 4. Если GAS вернул ID топика группы (например, "Вопросы по оплате"), дублируем туда
-          const targetChatId = result.chat_id || process.env.TELEGRAM_ADMIN_CHAT_ID;
-          const targetTopicId = isMedical ? result.topic_medical_id : result.topic_payments_id;
-
-          if (targetChatId && targetTopicId) {
-            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: targetChatId,
-                message_thread_id: Number(targetTopicId),
-                text: `📩 <b>Новое подтверждение (${isMedical ? 'Справка' : 'Чек'})</b>\nУченик: <code>${studentId}</code>\nСсылка на файл: ${fileUrl}`,
-                parse_mode: 'HTML'
-              })
-            }).catch(err => console.error('Error forwarding to group topic:', err));
-          }
-
+          return NextResponse.json({ ok: true });
+        } else {
+          // Если Apps Script не смог найти ученика по ФИО
+          const errorMsg = result?.message || 'Не удалось найти ученика по указанной подписи. Проверьте ФИО.';
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              ...(threadId ? { message_thread_id: threadId } : {}),
+              reply_to_message_id: update.message.message_id,
+              text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
+              parse_mode: 'HTML'
+            })
+          });
           return NextResponse.json({ ok: true });
         }
-      } else {
-        // Если ID ученика не указан в подписи
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: '⚠️ Пожалуйста, при отправке чека или справки укажите ID ученика в подписи (например: <code>STD-1001</code>).',
-            parse_mode: 'HTML'
-          })
-        });
-        return NextResponse.json({ ok: true });
       }
     }
 
