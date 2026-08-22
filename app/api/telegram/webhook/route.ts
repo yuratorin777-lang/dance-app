@@ -224,6 +224,105 @@ export async function POST(req: NextRequest) {
       }
     }
 
+// ------------------------------------------------------------------------
+    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ (ЧЕКИ И СПРАВКИ)
+    // ------------------------------------------------------------------------
+    if (update.message && (update.message.photo || update.message.document)) {
+      const chatId = update.message.chat.id;
+      const caption = (update.message.caption || '').trim(); // В подписи к фото можно передать ID ученика
+      const fileId = update.message.photo 
+        ? update.message.photo[update.message.photo.length - 1].file_id 
+        : update.message.document?.file_id;
+
+      // 1. Получаем прямую ссылку на файл из Telegram API
+      let fileUrl = '';
+      if (fileId && botToken) {
+        try {
+          const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+          const fileData = await fileRes.json();
+          if (fileData.ok && fileData.result?.file_path) {
+            fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+          }
+        } catch (e) {
+          console.error('Error fetching Telegram file URL:', e);
+        }
+      }
+
+      // Извлекаем ID ученика (из подписи к фото или текста сообщения)
+      const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
+      const studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
+
+      // Определение типа документа (Чек на оплату или Справка)
+      const isMedical = caption.toLowerCase().includes('справка') || caption.toLowerCase().includes('больничный');
+
+      if (studentId && googleScriptUrl) {
+        // Формируем payload для Google Apps Script
+        const payload = isMedical ? {
+          action: 'APPLY_FREEZE',
+          studentId: studentId,
+          days: 7, // Можно передать дни или даты
+          fileUrl: fileUrl
+        } : {
+          action: 'PROCESS_RECEIPT',
+          studentId: studentId,
+          amount: 4000, // В будущем здесь будет сумма из OCR
+          classesAdded: 8,
+          fileUrl: fileUrl
+        };
+
+        // 2. Вызываем наш GAS
+        const result = await callAppsScript(googleScriptUrl, payload);
+
+        if (result && result.status === 'success') {
+          const successText = isMedical 
+            ? `🏥 <b>Справка принята!</b>\n\nЗаморозка оформлена для ученика <code>${studentId}</code>.`
+            : `💳 <b>Оплата принята!</b>\n\nНачислено занятий: <b>${result.classes_added || 8}</b> для ученика <code>${studentId}</code>.`;
+
+          // 3. Отвечаем родителю в чат
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: successText,
+              parse_mode: 'HTML'
+            })
+          });
+
+          // 4. Если GAS вернул ID топика группы (например, "Вопросы по оплате"), дублируем туда
+          const targetChatId = result.chat_id || process.env.TELEGRAM_ADMIN_CHAT_ID;
+          const targetTopicId = isMedical ? result.topic_medical_id : result.topic_payments_id;
+
+          if (targetChatId && targetTopicId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: targetChatId,
+                message_thread_id: Number(targetTopicId),
+                text: `📩 <b>Новое подтверждение (${isMedical ? 'Справка' : 'Чек'})</b>\nУченик: <code>${studentId}</code>\nСсылка на файл: ${fileUrl}`,
+                parse_mode: 'HTML'
+              })
+            }).catch(err => console.error('Error forwarding to group topic:', err));
+          }
+
+          return NextResponse.json({ ok: true });
+        }
+      } else {
+        // Если ID ученика не указан в подписи
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '⚠️ Пожалуйста, при отправке чека или справки укажите ID ученика в подписи (например: <code>STD-1001</code>).',
+            parse_mode: 'HTML'
+          })
+        });
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     /// ------------------------------------------------------------------------
     // SUB-SECTION 2.2: CALLBACK QUERIES (BUTTON PRESSES)
     // ------------------------------------------------------------------------
