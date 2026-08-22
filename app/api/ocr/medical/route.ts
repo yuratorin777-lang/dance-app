@@ -15,18 +15,24 @@ const medicalSchema: Schema = {
   required: ['child_name', 'start_date', 'end_date', 'is_valid'],
 };
 
-export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg') {
+export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
+  // Универсальная очистка base64 от любого MIME-префикса
+  const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: [
       {
         inlineData: {
           mimeType: mimeType,
-          data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+          data: cleanBase64,
         },
       },
       {
-        text: 'Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).',
+        text: `Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).
+Дополнительно тебе дана подпись к справке от пользователя: "${caption}".
+Если из документа сложно понять ФИО, используй имя из подписи.
+Формат ответа — строго по JSON schema.`,
       },
     ],
     config: {
@@ -41,7 +47,7 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { imageBase64, mimeType = 'image/jpeg', studentId } = body;
+    const { imageBase64, mimeType = 'image/jpeg', studentId, caption = '' } = body;
 
     if (!imageBase64) {
       return NextResponse.json(
@@ -50,7 +56,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const extractedData = await analyzeMedicalDoc(imageBase64, mimeType);
+    const extractedData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
 
     if (!extractedData.is_valid) {
       return NextResponse.json({
@@ -70,7 +76,7 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           action: 'APPLY_FREEZE',
           studentId: studentId || null,
-          childName: extractedData.child_name,
+          searchQuery: caption || extractedData.child_name || '',
           startDate: extractedData.start_date,
           endDate: extractedData.end_date,
           reason: extractedData.diagnosis,
@@ -83,7 +89,7 @@ export async function POST(req: Request) {
     if (gasResult && gasResult.chat_id && gasResult.topic_medical_id && process.env.TELEGRAM_BOT_TOKEN) {
       const tgText = 
         `🏥 *МЕДИЦИНСКАЯ СПРАВКА / ЗАМОРОЗКА*\n\n` +
-        `👤 *Ученик:* ${extractedData.child_name || 'Не указан'}\n` +
+        `👤 *Ученик:* ${gasResult.student_name || extractedData.child_name || 'Не указан'}\n` +
         `📅 *Период:* с ${extractedData.start_date} по ${extractedData.end_date}\n` +
         `❄️ *Дней заморозки:* ${gasResult.days_frozen || '—'}\n` +
         `📝 *Диагноз/Причина:* ${extractedData.diagnosis || 'Не указан'}`;
