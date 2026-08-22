@@ -240,41 +240,28 @@ export async function POST(req: NextRequest) {
     // ------------------------------------------------------------------------
     // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ В ТОПИКАХ ГРУППЫ И ЛС
     // ------------------------------------------------------------------------
-    if (update.message && (update.message.photo || update.message.document)) {
-      const chatId = update.message.chat.id;
-      const threadId = update.message.message_thread_id;
-      const caption = (update.message.caption || '').trim();
+    // Поддерживаем как новые сообщения, так и отредактированные
+    const msg = update.message || update.edited_message;
 
-      const fileName = update.message.document?.file_name || '';
+    if (msg && (msg.photo || msg.document)) {
+      const chatId = msg.chat.id;
+      const threadId = msg.message_thread_id;
+      const caption = (msg.caption || '').trim();
+
+      const fileName = msg.document?.file_name || '';
       const lowerCaption = caption.toLowerCase();
       const lowerFileName = fileName.toLowerCase();
 
-      // Определение флага справки (по тексту подписи, имени файла или ID топика)
+      // Определение флага справки (по подписи, имени файла или ID топика)
       let isMedical = lowerCaption.includes('справка') || 
                       lowerCaption.includes('больничный') || 
                       lowerFileName.includes('справка') || 
                       lowerFileName.includes('больничный') ||
                       (process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID));
 
-      // Требуем подпись только для чеков. Для справок подпись опциональна!
-      if (!caption && !isMedical) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: threadId } : {}),
-            reply_to_message_id: update.message.message_id,
-            text: '⚠️ Пожалуйста, добавьте подпись к фото с Фамилией и Именем ребенка (например: <i>Иванова Маша</i>).',
-            parse_mode: 'HTML'
-          })
-        });
-        return NextResponse.json({ ok: true });
-      }
-
-      const fileId = update.message.photo 
-        ? update.message.photo[update.message.photo.length - 1].file_id 
-        : update.message.document?.file_id;
+      const fileId = msg.photo 
+        ? msg.photo[msg.photo.length - 1].file_id 
+        : msg.document?.file_id;
 
       let fileUrl = '';
       let imageBase64: string | null = null;
@@ -296,7 +283,7 @@ export async function POST(req: NextRequest) {
       const studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
 
       // 1. ОПРЕДЕЛЯЕМ MIME-ТИП (для PDF передаём application/pdf, для фото — image/jpeg)
-      const mimeType = update.message.document?.mime_type || 'image/jpeg';
+      const mimeType = msg.document?.mime_type || 'image/jpeg';
 
       let ocrData: any = null;
 
@@ -321,6 +308,22 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Требуем подпись только для чеков. Для справок подпись опциональна (возьмем ФИО из документа)
+      if (!isMedical && !caption) {
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            ...(threadId ? { message_thread_id: threadId } : {}),
+            reply_to_message_id: msg.message_id,
+            text: '⚠️ Пожалуйста, добавьте подпись к чеку с Фамилей и Именем ребенка (например: <i>Иванова Маша</i>).',
+            parse_mode: 'HTML'
+          })
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       if (googleScriptUrl) {
         let payload: Record<string, any> = {};
 
@@ -328,7 +331,7 @@ export async function POST(req: NextRequest) {
           payload = {
             action: 'APPLY_FREEZE',
             studentId: studentId,
-            // ПРИОРИТЕТ: Подпись родителя -> Имя ребенка из справки
+            // ПРИОРИТЕТ: Подпись родителя -> Имя ребенка из справки (распознанное Gemini)
             searchQuery: caption || ocrData?.child_name || '',
             startDate: ocrData?.start_date || null,
             endDate: ocrData?.end_date || null,
@@ -372,7 +375,7 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               chat_id: chatId,
               ...(threadId ? { message_thread_id: threadId } : {}),
-              reply_to_message_id: update.message.message_id,
+              reply_to_message_id: msg.message_id,
               text: successText,
               parse_mode: 'HTML'
             })
@@ -387,7 +390,7 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               chat_id: chatId,
               ...(threadId ? { message_thread_id: threadId } : {}),
-              reply_to_message_id: update.message.message_id,
+              reply_to_message_id: msg.message_id,
               text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
               parse_mode: 'HTML'
             })
