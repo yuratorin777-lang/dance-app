@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { analyzeReceipt } from '../../ocr/receipt/route';
+import { analyzeMedicalDoc } from '../../ocr/medical/route';
 
 export const dynamic = 'force-dynamic';
 
 // ============================================================================
-// 📌 HELPER: УНИВЕРСАЛЬНЫЙ ВЫЗОВ GOOGLE APPS SCRIPT
+// 📌 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И КОНФИГУРАЦИИ (ГЛОБАЛЬНЫЙ УРОВЕНЬ)
 // ============================================================================
+
+// Скачивание файла из Telegram в Base64
+async function downloadTelegramFileAsBase64(fileUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(fileUrl);
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString('base64');
+  } catch (e) {
+    console.error('Error downloading Telegram file to base64:', e);
+    return null;
+  }
+}
+
+// Вызов Google Apps Script
 async function callAppsScript(url: string, payload: object) {
   if (!url) return null;
   try {
@@ -33,9 +50,7 @@ async function callAppsScript(url: string, payload: object) {
   }
 }
 
-// ============================================================================
-// 📌 SECTION 0: INFO MATERIALS CONFIG
-// ============================================================================
+// Информационные материалы
 const INFO_MATERIALS: Record<string, string> = {
   clothes: `👕 <b>Что надеть на первое занятие:</b>\n\n` +
             `• Удобная спортивная одежда (легинсы/шорты, футболка)\n` +
@@ -82,9 +97,7 @@ function getBackToMenuKeyboard() {
   };
 }
 
-// ============================================================================
-// 📌 SECTION 1: HELPER FUNCTIONS & KEYBOARD GENERATORS
-// ============================================================================
+// Генератор дат
 async function generateUpcomingDays(
   leadId: string, 
   googleScriptUrl: string, 
@@ -136,7 +149,7 @@ async function generateUpcomingDays(
 }
 
 // ============================================================================
-// 📌 SECTION 2: MAIN WEBHOOK HANDLER
+// 🚀 ОСНОВНОЙ РОУТ WEBHOOK (POST)
 // ============================================================================
 export async function POST(req: NextRequest) {
   try {
@@ -224,15 +237,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
     // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ В ТОПИКАХ ГРУППЫ И ЛС
     // ------------------------------------------------------------------------
     if (update.message && (update.message.photo || update.message.document)) {
       const chatId = update.message.chat.id;
-      const threadId = update.message.message_thread_id; // ID топика
+      const threadId = update.message.message_thread_id;
       const caption = (update.message.caption || '').trim();
 
-      // Если вообще нет подписи к фото
       if (!caption) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
@@ -241,62 +253,97 @@ export async function POST(req: NextRequest) {
             chat_id: chatId,
             ...(threadId ? { message_thread_id: threadId } : {}),
             reply_to_message_id: update.message.message_id,
-            text: '⚠️ Пожалуйста, добавьте подпись к фото с Фамилией и Именем ребенка (например: <i>Иванова Маша</i>).',
+            text: '⚠️ Пожалуйста, добавьте подпись к фото с Фамилиией и Именем ребенка (например: <i>Иванова Маша</i>).',
             parse_mode: 'HTML'
           })
         });
         return NextResponse.json({ ok: true });
       }
-      
+
       const fileId = update.message.photo 
         ? update.message.photo[update.message.photo.length - 1].file_id 
         : update.message.document?.file_id;
 
-      // 1. Получаем ссылку на файл
       let fileUrl = '';
+      let imageBase64: string | null = null;
+
       if (fileId && botToken) {
         try {
           const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
           const fileData = await fileRes.json();
           if (fileData.ok && fileData.result?.file_path) {
             fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+            imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
           }
         } catch (e) {
           console.error('Error fetching Telegram file URL:', e);
         }
       }
 
-      // 2. Ищем ID (если есть) или берем весь текст подписи для поиска по ФИО
       const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
       const studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
-
       const isMedical = caption.toLowerCase().includes('справка') || caption.toLowerCase().includes('больничный');
 
+      // 1. ОПРЕДЕЛЯЕМ MIME-ТИП (для PDF передаём application/pdf, для фото — image/jpeg)
+      const mimeType = update.message.document?.mime_type || 'image/jpeg';
+
+      let ocrData: any = null;
+
+      // 2. Распознавание через Gemini с передачей mimeType и caption
+      if (imageBase64) {
+        try {
+          if (isMedical) {
+            ocrData = await analyzeMedicalDoc(imageBase64, mimeType);
+          } else {
+            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+          }
+        } catch (err) {
+          console.error('Gemini OCR process error:', err);
+        }
+      }
+
       if (googleScriptUrl) {
-        const payload = isMedical ? {
-          action: 'APPLY_FREEZE',
-          studentId: studentId, // Передаст null, если ID нет
-          searchQuery: caption, // Текст подписи (например "Справка Соколов Егор")
-          days: 7,
-          fileUrl: fileUrl,
-          rawCaption: caption
-        } : {
-          action: 'PROCESS_RECEIPT',
-          studentId: studentId,
-          searchQuery: caption, // Текст подписи (например "Оплата за Иванову Машу")
-          amount: 4000,
-          classesAdded: 8,
-          fileUrl: fileUrl,
-          rawCaption: caption
-        };
+        let payload: Record<string, any> = {};
+
+        if (isMedical) {
+          payload = {
+            action: 'APPLY_FREEZE',
+            studentId: studentId,
+            searchQuery: ocrData?.child_name || caption,
+            startDate: ocrData?.start_date || null,
+            endDate: ocrData?.end_date || null,
+            days: 7,
+            fileUrl: fileUrl,
+            rawCaption: caption,
+            reason: ocrData?.diagnosis || null
+          };
+        } else {
+          const parsedAmount = ocrData?.amount ? Number(ocrData.amount) : 4000;
+          payload = {
+            action: 'PROCESS_RECEIPT',
+            studentId: studentId,
+            searchQuery: ocrData?.sender_name || caption,
+            amount: parsedAmount,
+            classesAdded: Math.floor(parsedAmount / 500) || 8,
+            fileUrl: fileUrl,
+            rawCaption: caption,
+            timestamp: ocrData?.timestamp || null,
+            paymentType: ocrData?.payment_type || null
+          };
+        }
 
         const result = await callAppsScript(googleScriptUrl, payload);
 
         if (result && result.status === 'success') {
           const studentName = result.student_name || result.studentId || 'ученика';
           const successText = isMedical 
-            ? `🏥 <b>Справка принята!</b>\nЗаморозка оформлена для <b>${studentName}</b>.`
-            : `💳 <b>Оплата принята!</b>\nНачислено занятий: <b>${result.classes_added || 8}</b> для <b>${studentName}</b>.`;
+            ? `🏥 <b>Справка принята!</b>\n` +
+              `👤 Ученик: <b>${studentName}</b>\n` +
+              `📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>`
+            : `💳 <b>Оплата принята!</b>\n` +
+              `👤 Ученик: <b>${studentName}</b>\n` +
+              `💰 Сумма: <b>${payload.amount} ₽</b>\n` +
+              `➕ Начислено занятий: <b>${result.classes_added || payload.classesAdded}</b>.`;
 
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
@@ -312,7 +359,6 @@ export async function POST(req: NextRequest) {
 
           return NextResponse.json({ ok: true });
         } else {
-          // Если Apps Script не смог найти ученика по ФИО
           const errorMsg = result?.message || 'Не удалось найти ученика по указанной подписи. Проверьте ФИО.';
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
@@ -330,7 +376,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
     // SUB-SECTION 2.2: CALLBACK QUERIES (BUTTON PRESSES)
     // ------------------------------------------------------------------------
     if (update.callback_query) {
@@ -338,8 +384,6 @@ export async function POST(req: NextRequest) {
       const callbackData = callbackQuery.data || '';
       const message = callbackQuery.message;
 
-      // ⚡ МГНОВЕННО ГАСИМ «ЧАСИКИ» НА КНОПКЕ ДЛЯ ЛЮБОГО КЛИКА
-      // Это предотвращает заморозку интерфейса в Telegram и не требует перезахода в бот
       await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -356,8 +400,6 @@ export async function POST(req: NextRequest) {
       if (callbackData === 'ignore') {
         return NextResponse.json({ ok: true });
       }
-
-      // Далее идет вся твоя остальная логика обработки (confirm_parent_group и т.д.)
 
       // 📌 SECTION 2.3: INFO MENU HANDLERS
       if (callbackData.startsWith('info_')) {
@@ -455,63 +497,62 @@ export async function POST(req: NextRequest) {
       }
 
       if (callbackData.startsWith('confirm_parent_group:')) {
-  const [, leadId, selectedDate, groupId] = callbackData.split(':');
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+        const [, leadId, selectedDate, groupId] = callbackData.split(':');
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-  let leadDetails: any = null;
+        let leadDetails: any = null;
 
-  if (googleScriptUrl) {
-    const data = await callAppsScript(googleScriptUrl, {
-      action: 'assign_first_lesson',
-      lead_id: leadId,
-      group_id: groupId,
-      first_lesson_date: selectedDate,
-      by_parent: true
-    });
-    if (data && data.lead) {
-      leadDetails = data.lead;
-    }
-  }
+        if (googleScriptUrl) {
+          const data = await callAppsScript(googleScriptUrl, {
+            action: 'assign_first_lesson',
+            lead_id: leadId,
+            group_id: groupId,
+            first_lesson_date: selectedDate,
+            by_parent: true
+          });
+          if (data && data.lead) {
+            leadDetails = data.lead;
+          }
+        }
 
-  const [year, month, day] = selectedDate.split('-');
-  const formattedDisplayDate = `${day}.${month}.${year}`;
+        const [year, month, day] = selectedDate.split('-');
+        const formattedDisplayDate = `${day}.${month}.${year}`;
 
-  // 1. РЕДАКТИРУЕМ ИСХОДНУЮ КАРТОЧКУ В ТОПИКЕ "НОВЫЕ ЗАЯВКИ"
-  const cardMessageId = leadDetails?.tg_message_id;
-  const leadsTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1'; // Топик "Новые заявки"
+        // 1. РЕДАКТИРУЕМ ИСХОДНУЮ КАРТОЧКУ В ТОПИКЕ "НОВЫЕ ЗАЯВКИ"
+        const cardMessageId = leadDetails?.tg_message_id;
+        const leadsTopicId = process.env.TELEGRAM_LEADS_TOPIC_ID || '1';
 
-  // ВАЖНО: Карточка находится в АДМИНСКОМ ЧАТЕ, а не у родителя!
-  if (adminChatId && cardMessageId) {
-    const updatedCardText = 
-      `🔥 <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n\n` +
-      `🆔 <b>ID Заявки:</b> <code>${leadId}</code>\n` +
-      `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
-      `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
-      `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
-      `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
-      `✅ <b>СТАТУС:</b> Записан на 1-е занятие\n` +
-      `📅 <b>Дата:</b> <code>${formattedDisplayDate}</code>\n` +
-      `🩰 <b>Группа:</b> <code>${groupId}</code>\n` +
-      `✨ <i>Родитель записался сам через бота</i>`;
+        if (adminChatId && cardMessageId) {
+          const updatedCardText = 
+            `🔥 <b>ЗАПИСАН НА 1-Е ЗАНЯТИЕ</b>\n\n` +
+            `🆔 <b>ID Заявки:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${leadDetails?.parentName || '—'}\n` +
+            `👶 <b>Ребенок:</b> ${leadDetails?.childName || '—'}\n` +
+            `📞 <b>Телефон:</b> ${leadDetails?.phone || '—'}\n` +
+            `🏙 <b>Город:</b> ${leadDetails?.city || '—'}\n\n` +
+            `✅ <b>СТАТУС:</b> Записан на 1-е занятие\n` +
+            `📅 <b>Дата:</b> <code>${formattedDisplayDate}</code>\n` +
+            `🩰 <b>Группа:</b> <code>${groupId}</code>\n` +
+            `✨ <i>Родитель записался сам через бота</i>`;
 
-    const editPayload: any = {
-      chat_id: adminChatId, // ИСПОЛЬЗУЕМ ИМЕННО АДМИНСКИЙ ЧАТ
-      message_id: Number(cardMessageId),
-      text: updatedCardText,
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [] } // ПУСТОЙ МАССИВ — УБИРАЕТ КНОПКИ!
-    };
+          const editPayload: any = {
+            chat_id: adminChatId,
+            message_id: Number(cardMessageId),
+            text: updatedCardText,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [] }
+          };
 
-    if (leadsTopicId) {
-      editPayload.message_thread_id = Number(leadsTopicId);
-    }
+          if (leadsTopicId) {
+            editPayload.message_thread_id = Number(leadsTopicId);
+          }
 
-    await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editPayload)
-    }).catch(err => console.error('Error editing original admin card:', err));
-  }
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(editPayload)
+          }).catch(err => console.error('Error editing original admin card:', err));
+        }
 
         // 2. ОТПРАВЛЯЕМ НОВОЕ УВЕДОМЛЕНИЕ В ТОПИК 1-ГО ЗАНЯТИЯ
         if (adminChatId) {
@@ -570,222 +611,200 @@ export async function POST(req: NextRequest) {
       }
 
       // 📌 SECTION 3.1: TRIAL CONFIRMATION HANDLERS
-      
-// --- 1. ОТВЕТ «ДА» РОДИТЕЛЯ В ЛС БОТА ---
-if (callbackData.startsWith('confirm_trial_yes:')) {
-  const leadId = callbackData.split(':')[1];
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+      if (callbackData.startsWith('confirm_trial_yes:')) {
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-  let leadDetails: any = null;
+        let leadDetails: any = null;
 
-  if (googleScriptUrl) {
-    const data: any = await callAppsScript(googleScriptUrl, {
-      action: 'confirm_attendance',
-      lead_id: leadId,
-      is_confirmed: true
-    }).catch(err => console.error('Apps Script error:', err));
+        if (googleScriptUrl) {
+          const data: any = await callAppsScript(googleScriptUrl, {
+            action: 'confirm_attendance',
+            lead_id: leadId,
+            is_confirmed: true
+          }).catch(err => console.error('Apps Script error:', err));
 
-    console.log('Apps Script response (YES):', JSON.stringify(data));
+          if (data && data.ok) {
+            leadDetails = data.lead || data.result || data;
+          }
+        }
 
-    if (data && data.ok) {
-      // Извлекаем объект лида
-      leadDetails = data.lead || data.result || data;
-    }
-  }
+        const parentName = leadDetails?.parent_name || leadDetails?.parentName || leadDetails?.['Имя родителя'] || 'Не указано';
+        const childName = leadDetails?.child_name || leadDetails?.childName || leadDetails?.['Имя ребенка'] || 'Не указано';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || 'Не указано';
+        const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
+        const groupName = leadDetails?.group_name || leadDetails?.groupName || leadDetails?.['Группа'] || '—';
+        const lessonTime = leadDetails?.lesson_time || leadDetails?.lessonTime || leadDetails?.['Время'] || '—';
+        
+        const rawAdminMsgId = leadDetails?.tg_message_id || leadDetails?.tgMessageId || leadDetails?.adminMessageId || leadDetails?.admin_message_id;
+        const adminMessageId = rawAdminMsgId && !isNaN(Number(rawAdminMsgId)) && Number(rawAdminMsgId) > 0 ? Number(rawAdminMsgId) : null;
 
-  // Подтягиваем данные
-  const parentName = leadDetails?.parent_name || leadDetails?.parentName || leadDetails?.['Имя родителя'] || 'Не указано';
-  const childName = leadDetails?.child_name || leadDetails?.childName || leadDetails?.['Имя ребенка'] || 'Не указано';
-  const phone = leadDetails?.phone || leadDetails?.['Телефон'] || 'Не указано';
-  const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
-  const groupName = leadDetails?.group_name || leadDetails?.groupName || leadDetails?.['Группа'] || '—';
-  const lessonTime = leadDetails?.lesson_time || leadDetails?.lessonTime || leadDetails?.['Время'] || '—';
-  
-  // Извлекаем ID сообщения из колонки L
-  const rawAdminMsgId = leadDetails?.tg_message_id || leadDetails?.tgMessageId || leadDetails?.adminMessageId || leadDetails?.admin_message_id;
-  const adminMessageId = rawAdminMsgId && !isNaN(Number(rawAdminMsgId)) && Number(rawAdminMsgId) > 0 ? Number(rawAdminMsgId) : null;
+        if (adminChatId) {
+          const confirmMessageText = 
+            `✅ <b>РОДИТЕЛЬ ПОДТВЕРДИЛ ПРИСУТСТВИЕ (ЧЕРЕЗ БОТА)</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${parentName}\n` +
+            `👶 <b>Ребенок:</b> ${childName}\n` +
+            `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+            `🏙 <b>Город:</b> ${city}\n` +
+            (groupName !== '—' ? `🩰 <b>Группа:</b> ${groupName}\n` : '') +
+            (lessonTime !== '—' ? `⏰ <b>Время:</b> ${lessonTime}\n` : '');
 
-  if (adminChatId) {
-    const confirmMessageText = 
-      `✅ <b>РОДИТЕЛЬ ПОДТВЕРДИЛ ПРИСУТСТВИЕ (ЧЕРЕЗ БОТА)</b>\n\n` +
-      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-      `👤 <b>Родитель:</b> ${parentName}\n` +
-      `👶 <b>Ребенок:</b> ${childName}\n` +
-      `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
-      `🏙 <b>Город:</b> ${city}\n` +
-      (groupName !== '—' ? `🩰 <b>Группа:</b> ${groupName}\n` : '') +
-      (lessonTime !== '—' ? `⏰ <b>Время:</b> ${lessonTime}\n` : '');
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 74,
+              text: confirmMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to Topic 74:', err));
 
-    // 1. Отправка карточки с ПОЛНЫМИ ДАННЫМИ в Топик 74 (Подтверждено)
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: adminChatId,
-        message_thread_id: 74,
-        text: confirmMessageText,
-        parse_mode: 'HTML'
-      })
-    }).catch(err => console.error('Error sending to Topic 74:', err));
+          if (adminMessageId) {
+            const topic3UpdateText = 
+              `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              `👤 <b>Родитель:</b> ${parentName}\n` +
+              `👶 <b>Ребенок:</b> ${childName}\n` +
+              `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+              `🏙 <b>Город:</b> ${city}`;
 
-    // 2. Снимаем кнопки и меняем текст в Топике 3
-    if (adminMessageId) {
-      const topic3UpdateText = 
-        `✅ <b>ПОДТВЕРЖДЕНО РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
-        `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-        `👤 <b>Родитель:</b> ${parentName}\n` +
-        `👶 <b>Ребенок:</b> ${childName}\n` +
-        `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
-        `🏙 <b>Город:</b> ${city}`;
+            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: adminChatId,
+                message_id: adminMessageId,
+                text: topic3UpdateText,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [] }
+              })
+            }).catch(err => console.error('Error updating Topic 3 message:', err));
+          }
+        }
 
-      await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: adminChatId,
-          message_id: adminMessageId,
-          text: topic3UpdateText,
-          parse_mode: 'HTML',
-          reply_markup: { inline_keyboard: [] }
-        })
-      }).catch(err => console.error('Error updating Topic 3 message:', err));
-    } else {
-      console.warn(`[WARN] adminMessageId (tg_message_id) not found for leadId ${leadId}`);
-    }
-  }
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
+            parse_mode: 'HTML',
+            reply_markup: getInfoMenuKeyboard()
+          })
+        });
 
-  // Ответ родителю в ЛС
-  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `🎉 <b>Отлично, ждем вас сегодня на занятии!</b>\n\nПожалуйста, приходите за 10–15 минут до начала.`,
-      parse_mode: 'HTML',
-      reply_markup: typeof getInfoMenuKeyboard === 'function' ? getInfoMenuKeyboard() : { inline_keyboard: [] }
-    })
-  });
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
+        });
 
-  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackQuery.id, text: 'Спасибо за подтверждение!' })
-  });
+        return NextResponse.json({ ok: true });
+      }
 
-  return NextResponse.json({ ok: true });
-}
+      if (callbackData.startsWith('confirm_trial_no:')) {
+        const leadId = callbackData.split(':')[1];
+        const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-// --- 2. ОТВЕТ «НЕТ» (ОТМЕНА/ПЕРЕНОС) РОДИТЕЛЯ В ЛС БОТА ---
-if (callbackData.startsWith('confirm_trial_no:')) {
-  const leadId = callbackData.split(':')[1];
-  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+        let leadDetails: any = null;
 
-  let leadDetails: any = null;
+        if (googleScriptUrl) {
+          const data: any = await callAppsScript(googleScriptUrl, {
+            action: 'confirm_attendance',
+            lead_id: leadId,
+            is_confirmed: false
+          }).catch(err => console.error('Apps Script error:', err));
 
-  if (googleScriptUrl) {
-    const data: any = await callAppsScript(googleScriptUrl, {
-      action: 'confirm_attendance',
-      lead_id: leadId,
-      is_confirmed: false
-    }).catch(err => console.error('Apps Script error:', err));
+          if (data && data.ok) {
+            leadDetails = data.lead || data.result || data;
+          }
+        }
 
-    console.log('Apps Script response (NO):', JSON.stringify(data));
+        const parentName = leadDetails?.parent_name || leadDetails?.parentName || leadDetails?.['Имя родителя'] || 'Не указано';
+        const childName = leadDetails?.child_name || leadDetails?.childName || leadDetails?.['Имя ребенка'] || 'Не указано';
+        const phone = leadDetails?.phone || leadDetails?.['Телефон'] || 'Не указано';
+        const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
+        
+        const rawAdminMsgId = leadDetails?.tg_message_id || leadDetails?.tgMessageId || leadDetails?.adminMessageId || leadDetails?.admin_message_id;
+        const adminMessageId = rawAdminMsgId && !isNaN(Number(rawAdminMsgId)) && Number(rawAdminMsgId) > 0 ? Number(rawAdminMsgId) : null;
 
-    if (data && data.ok) {
-      leadDetails = data.lead || data.result || data;
-    }
-  }
+        if (adminChatId) {
+          const alarmMessageText = 
+            `🚨 <b>ОТМЕНА/ПЕРЕНОС РОДИТЕЛЕМ (ЧЕРЕЗ БОТА)</b>\n\n` +
+            `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+            `👤 <b>Родитель:</b> ${parentName}\n` +
+            `👶 <b>Ребенок:</b> ${childName}\n` +
+            `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+            `🏙 <b>Город:</b> ${city}\n\n` +
+            `⚠️ <i>Родитель сообщил в боте, что прийти не сможет. Свяжитесь для уточнения переноса!</i>`;
 
-  const parentName = leadDetails?.parent_name || leadDetails?.parentName || leadDetails?.['Имя родителя'] || 'Не указано';
-  const childName = leadDetails?.child_name || leadDetails?.childName || leadDetails?.['Имя ребенка'] || 'Не указано';
-  const phone = leadDetails?.phone || leadDetails?.['Телефон'] || 'Не указано';
-  const city = leadDetails?.city || leadDetails?.['Город'] || 'Не указано';
-  
-  const rawAdminMsgId = leadDetails?.tg_message_id || leadDetails?.tgMessageId || leadDetails?.adminMessageId || leadDetails?.admin_message_id;
-  const adminMessageId = rawAdminMsgId && !isNaN(Number(rawAdminMsgId)) && Number(rawAdminMsgId) > 0 ? Number(rawAdminMsgId) : null;
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: adminChatId,
+              message_thread_id: 6,
+              text: alarmMessageText,
+              parse_mode: 'HTML'
+            })
+          }).catch(err => console.error('Error sending to Topic 6:', err));
 
-  if (adminChatId) {
-    const alarmMessageText = 
-      `🚨 <b>ОТМЕНА/ПЕРЕНОС РОДИТЕЛЕМ (ЧЕРЕЗ БОТА)</b>\n\n` +
-      `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-      `👤 <b>Родитель:</b> ${parentName}\n` +
-      `👶 <b>Ребенок:</b> ${childName}\n` +
-      `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
-      `🏙 <b>Город:</b> ${city}\n\n` +
-      `⚠️ <i>Родитель сообщил в боте, что прийти не сможет. Свяжитесь для уточнения переноса!</i>`;
+          if (adminMessageId) {
+            const topic3UpdateText = 
+              `🚨 <b>ОТМЕНА РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
+              `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
+              `👤 <b>Родитель:</b> ${parentName}\n` +
+              `👶 <b>Ребенок:</b> ${childName}\n` +
+              `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
+              `🏙 <b>Город:</b> ${city}`;
 
-    // 1. Отправка в Топик 6 (Алярмы) с ПОЛНЫМИ ДАННЫМИ
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: adminChatId,
-        message_thread_id: 6,
-        text: alarmMessageText,
-        parse_mode: 'HTML'
-      })
-    }).catch(err => console.error('Error sending to Topic 6:', err));
+            await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: adminChatId,
+                message_id: adminMessageId,
+                text: topic3UpdateText,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [] }
+              })
+            }).catch(err => console.error('Error updating Topic 3 message:', err));
+          }
+        }
 
-    // 2. Снимаем кнопки у администратора в Топике 3
-    if (adminMessageId) {
-      const topic3UpdateText = 
-        `🚨 <b>ОТМЕНА РОДИТЕЛЕМ В БОТЕ</b>\n\n` +
-        `🆔 <b>ID Лида:</b> <code>${leadId}</code>\n` +
-        `👤 <b>Родитель:</b> ${parentName}\n` +
-        `👶 <b>Ребенок:</b> ${childName}\n` +
-        `📞 <b>Телефон:</b> <code>${phone}</code>\n` +
-        `🏙 <b>Город:</b> ${city}`;
+        const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
 
-      await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: adminChatId,
-          message_id: adminMessageId,
-          text: topic3UpdateText,
-          parse_mode: 'HTML',
-          reply_markup: { inline_keyboard: [] }
-        })
-      }).catch(err => console.error('Error updating Topic 3 message:', err));
-    } else {
-      console.warn(`[WARN] adminMessageId not found for leadId ${leadId}`);
-    }
-  }
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: daysKeyboard }
+          })
+        });
 
-  const daysKeyboard = await generateUpcomingDays(leadId, googleScriptUrl, 'parent');
+        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ callback_query_id: callbackQuery.id })
+        });
 
-  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `Очень жаль, что вы не сможете прийти сегодня! 😔\n\nДавайте перенесем занятие на другой удобный для вас день:`,
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: daysKeyboard }
-    })
-  });
+        return NextResponse.json({ ok: true });
+      }
 
-  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackQuery.id })
-  });
-
-  return NextResponse.json({ ok: true });
-}
-
-      // --- 2. КНОПКИ АДМИНИСТРАТОРА В ТОПИКЕ 3 "ЗАПИСАН НА 1-Е ЗАНЯТИЕ" ---
       if (callbackData.startsWith('admin_confirm:') || callbackData.startsWith('admin_cancel:')) {
         const isAdminConfirm = callbackData.startsWith('admin_confirm:');
         const leadId = callbackData.split(':')[1];
         const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
 
-        // 1. Извлекаем ИСХОДНЫЙ текст сообщения, на котором нажали кнопку (Вся карточка клиента)
         const originalText = callbackQuery.message?.text || '';
 
-        // 2. Отправляем запрос в Apps Script (просто чтобы обновить статус в таблице)
         if (googleScriptUrl) {
           callAppsScript(googleScriptUrl, {
             action: 'confirm_attendance',
@@ -794,7 +813,6 @@ if (callbackData.startsWith('confirm_trial_no:')) {
           }).catch(err => console.error('Apps Script update error:', err));
         }
 
-        // 3. Отправляем ТУ ЖЕ САМУЮ КАРТОЧКУ в нужный топик (74 или 6)
         if (adminChatId) {
           const targetTopicId = isAdminConfirm ? 74 : 6;
           const statusHeader = isAdminConfirm 
@@ -815,7 +833,6 @@ if (callbackData.startsWith('confirm_trial_no:')) {
           }).catch(err => console.error(`Error sending to Topic ${targetTopicId}:`, err));
         }
 
-        // 4. Обновляем сообщение в Топике 3: добавляем плашку сверху, сохраняем карточку клиента и убираем кнопки
         const updatedTopic3Text = 
           (isAdminConfirm ? `✅ <b>ПОДТВЕРЖДЕНО АДМИНИСТРАТОРОМ</b>\n\n` : `🚨 <b>ОТМЕНЕНО / ПЕРЕНОС (АДМИН)</b>\n\n`) + 
           originalText;
@@ -841,7 +858,6 @@ if (callbackData.startsWith('confirm_trial_no:')) {
         return NextResponse.json({ ok: true });
       }
 
-      // --- 3. ОБРАБОТКА ВЫБОРА ДАТЫ ПЕРЕНОСА (РОДИТЕЛЬ ИЛИ АДМИН) ---
       if (callbackData.startsWith('resched_day_parent:') || callbackData.startsWith('resched_day_admin:')) {
         const parts = callbackData.split(':');
         const isParent = callbackData.startsWith('resched_day_parent:');
@@ -866,7 +882,6 @@ if (callbackData.startsWith('confirm_trial_no:')) {
             `📆 <b>Новая дата:</b> <code>${newDate}</code>\n` +
             `👤 <b>Кем перенесено:</b> ${isParent ? 'Родитель (через бота)' : 'Администратор'}`;
 
-          // Отправка информации о переносе в Топик 6 (Алярмы/Переносы)
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -891,7 +906,7 @@ if (callbackData.startsWith('confirm_trial_no:')) {
             message_id: messageId,
             text: userConfirmationText,
             parse_mode: 'HTML',
-            reply_markup: isParent && typeof getInfoMenuKeyboard === 'function' ? getInfoMenuKeyboard() : { inline_keyboard: [] }
+            reply_markup: isParent ? getInfoMenuKeyboard() : { inline_keyboard: [] }
           })
         });
 

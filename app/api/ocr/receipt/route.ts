@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
-// Инициализация Gemini API с ключом из переменной окружения
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Схема ответа от Gemini
 const responseSchema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -20,6 +18,39 @@ const responseSchema: Schema = {
   required: ['amount', 'status'],
 };
 
+export async function analyzeReceipt(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
+  // Очищаем Base64 от любого префикса (image, application/pdf и т.д.)
+  const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [
+      {
+        inlineData: {
+          mimeType: mimeType,
+          data: cleanBase64,
+        },
+      },
+      {
+        text: `Внимательно распознай банковский чек или документ оплаты. 
+Извлеки сумму, дату и время операции. 
+
+Дополнительно тебе дана подпись к чеку от пользователя: "${caption}".
+Извлеки из подписи или из чека Имя и Фамилию ребенка (очисти от слов "за", "оплата за", "для" и т.д.).
+Верни ФИО в поле sender_name в формате "Фамилия Имя" или "Имя Фамилия".
+
+Отвечай строго по JSON schema.`,
+      },
+    ],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema,
+    },
+  });
+
+  return JSON.parse(response.text || '{}');
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -32,29 +63,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Отправка запроса в Gemini 2.5 Flash
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
-          },
-        },
-        {
-          text: 'Внимательно распознай банковский чек. Извлеки сумму, дату и время операции, имя отправителя и статус перевода. Отвечай строго по JSON schema.',
-        },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: responseSchema,
-      },
-    });
+    const extractedData = await analyzeReceipt(imageBase64, mimeType);
 
-    const extractedData = JSON.parse(response.text || '{}');
-
-    // Проверка статуса распознанного чека
     if (extractedData.status !== 'SUCCESS' && extractedData.status !== 'УСПЕШНО') {
       return NextResponse.json({
         success: false,
@@ -63,9 +73,8 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Отправка данных в Google Apps Script (GAS)
     let gasResult: any = null;
-    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL; // <-- ИСПРАВЛЕННОЕ ИМЯ ПЕРЕМЕННОЙ
+    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
     if (gasUrl) {
       const gasResponse = await fetch(gasUrl, {
@@ -85,7 +94,6 @@ export async function POST(req: Request) {
       gasResult = await gasResponse.json();
     }
 
-    // 3. Отправка карточки оплаты в Telegram (в topic_payments_id или общий чат группы)
     if (gasResult && gasResult.chat_id && process.env.TELEGRAM_BOT_TOKEN) {
       const tgText = 
         `💳 *ПОСТУПИЛА ОПЛАТА ПО ЧЕКУ*\n\n` +
@@ -101,7 +109,6 @@ export async function POST(req: Request) {
         parse_mode: 'Markdown',
       };
 
-      // Если в GAS передается ID топика оплат — отправляем в топик
       if (gasResult.topic_payments_id) {
         payload.message_thread_id = gasResult.topic_payments_id;
       }

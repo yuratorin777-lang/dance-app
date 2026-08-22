@@ -15,6 +15,29 @@ const medicalSchema: Schema = {
   required: ['child_name', 'start_date', 'end_date', 'is_valid'],
 };
 
+export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg') {
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: [
+      {
+        inlineData: {
+          mimeType: mimeType,
+          data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+        },
+      },
+      {
+        text: 'Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).',
+      },
+    ],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: medicalSchema,
+    },
+  });
+
+  return JSON.parse(response.text || '{}');
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -27,27 +50,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Распознавание документа через Gemini AI
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          inlineData: {
-            mimeType: mimeType,
-            data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
-          },
-        },
-        {
-          text: 'Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).',
-        },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: medicalSchema,
-      },
-    });
-
-    const extractedData = JSON.parse(response.text || '{}');
+    const extractedData = await analyzeMedicalDoc(imageBase64, mimeType);
 
     if (!extractedData.is_valid) {
       return NextResponse.json({
@@ -57,9 +60,8 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Отправка данных в Google Apps Script (GAS)
     let gasResult: any = null;
-    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL; // <-- ИСПРАВЛЕННОЕ ИМЯ ПЕРЕМЕННОЙ
+    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
     if (gasUrl) {
       const gasResponse = await fetch(gasUrl, {
@@ -78,7 +80,6 @@ export async function POST(req: Request) {
       gasResult = await gasResponse.json();
     }
 
-    // 3. Отправка уведомления в Telegram (в topic_medical_id группы)
     if (gasResult && gasResult.chat_id && gasResult.topic_medical_id && process.env.TELEGRAM_BOT_TOKEN) {
       const tgText = 
         `🏥 *МЕДИЦИНСКАЯ СПРАВКА / ЗАМОРОЗКА*\n\n` +
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: gasResult.chat_id,
-          message_thread_id: gasResult.topic_medical_id, // ID топика из колонки L таблицы groups
+          message_thread_id: gasResult.topic_medical_id,
           text: tgText,
           parse_mode: 'Markdown',
         }),
