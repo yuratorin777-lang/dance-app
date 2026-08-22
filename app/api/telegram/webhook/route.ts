@@ -309,7 +309,7 @@ export async function POST(req: NextRequest) {
           payload = {
             action: 'APPLY_FREEZE',
             studentId: studentId,
-            searchQuery: ocrData?.child_name || caption,
+            searchQuery: caption || ocrData?.child_name || '',
             startDate: ocrData?.start_date || null,
             endDate: ocrData?.end_date || null,
             days: 7,
@@ -322,7 +322,8 @@ export async function POST(req: NextRequest) {
           payload = {
             action: 'PROCESS_RECEIPT',
             studentId: studentId,
-            searchQuery: ocrData?.sender_name || caption,
+            // ПРИОРИТЕТ: Сначала подпись родителя в Telegram (caption), а имя из чека — как фоллбэк
+            searchQuery: caption || ocrData?.sender_name || '',
             amount: parsedAmount,
             classesAdded: Math.floor(parsedAmount / 500) || 8,
             fileUrl: fileUrl,
