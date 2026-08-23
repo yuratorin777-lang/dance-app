@@ -149,6 +149,26 @@ async function generateUpcomingDays(
 }
 
 // ============================================================================
+// 🌐 CORS ОБРАБОТКА (ДЛЯ Cross-Origin ЗАПРОСОВ ИЗ ЛК)
+// ============================================================================
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+// ============================================================================
 // 🚀 ОСНОВНОЙ РОУТ WEBHOOK (POST)
 // ============================================================================
 export async function POST(req: NextRequest) {
@@ -167,9 +187,9 @@ export async function POST(req: NextRequest) {
           action: 'request_freeze',
           ...update
         });
-        return NextResponse.json(result || { status: 'success' });
+        return NextResponse.json(result || { status: 'success' }, { headers: corsHeaders });
       }
-      return NextResponse.json({ status: 'error', message: 'No Google Script URL configured' }, { status: 400 });
+      return NextResponse.json({ status: 'error', message: 'No Google Script URL configured' }, { status: 400, headers: corsHeaders });
     }
 
     // ------------------------------------------------------------------------
