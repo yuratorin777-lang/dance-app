@@ -351,7 +351,7 @@ export async function POST(req: NextRequest) {
             chat_id: chatId,
             ...(threadId ? { message_thread_id: threadId } : {}),
             reply_to_message_id: msg.message_id,
-            text: '⚠️ Пожалуйста, добавьте подпись к чеку с Фамилей и Именем ребенка (например: <i>Иванова Маша</i>).',
+            text: '⚠️ Пожалуйста, добавьте подпись к чеку с Фамилией и Именем ребенка (например: <i>Иванова Маша</i>).',
             parse_mode: 'HTML'
           })
         });
@@ -365,7 +365,6 @@ export async function POST(req: NextRequest) {
           payload = {
             action: 'APPLY_FREEZE',
             studentId: studentId,
-            // ПРИОРИТЕТ: Подпись родителя -> Имя ребенка из справки (распознанное Gemini)
             searchQuery: caption || ocrData?.child_name || '',
             startDate: ocrData?.start_date || null,
             endDate: ocrData?.end_date || null,
@@ -391,7 +390,7 @@ export async function POST(req: NextRequest) {
 
         const result = await callAppsScript(googleScriptUrl, payload);
 
-        if (result && result.status === 'success') {
+        if (result && (result.status === 'success' || result.ok)) {
           const studentName = result.student_name || result.studentId || 'ученика';
           const successText = isMedical 
             ? `🏥 <b>Справка принята!</b>\n` +
@@ -403,23 +402,27 @@ export async function POST(req: NextRequest) {
               `💰 Сумма: <b>${payload.amount} ₽</b>\n` +
               `➕ Начислено занятий: <b>${result.classes_added || payload.classesAdded}</b>.`;
 
-          // 1. Отвечаем в тот чат/топик, где было загружено фото
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              ...(threadId ? { message_thread_id: threadId } : {}),
-              reply_to_message_id: msg.message_id,
-              text: successText,
-              parse_mode: 'HTML'
-            })
-          });
+          const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id;
+          const targetTopicId = isMedical 
+            ? (result.topic_medical_id || result.medical_topic_id) 
+            : (result.topic_payments_id || result.payment_topic_id);
 
-          // 2. Если файл пришел из ЛС, а GAS вернул target-чат/топик группы ученика, дублируем сообщение туда
-          const targetGroupChatId = result.chat_id;
-          const targetTopicId = isMedical ? result.topic_medical_id : result.topic_payments_id;
+          // 1. Если запрос был из Telegram-бота (есть chatId) — отвечаем пользователю в чат
+          if (chatId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                ...(threadId ? { message_thread_id: threadId } : {}),
+                reply_to_message_id: msg.message_id,
+                text: successText,
+                parse_mode: 'HTML'
+              })
+            });
+          }
 
+          // 2. Если это ЛС или запрос из ЛК, дублируем сообщение в топик рабочей группы Telegram
           if (targetGroupChatId && chatId !== targetGroupChatId) {
             await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
               method: 'POST',
@@ -433,21 +436,24 @@ export async function POST(req: NextRequest) {
             }).catch(e => console.error('Error forwarding message to group topic:', e));
           }
 
-          return NextResponse.json({ ok: true });
+          return NextResponse.json({ ok: true, result });
         } else {
           const errorMsg = result?.message || 'Не удалось найти ученика по указанной подписи или документу. Проверьте ФИО.';
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: chatId,
-              ...(threadId ? { message_thread_id: threadId } : {}),
-              reply_to_message_id: msg.message_id,
-              text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
-              parse_mode: 'HTML'
-            })
-          });
-          return NextResponse.json({ ok: true });
+          
+          if (chatId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                ...(threadId ? { message_thread_id: threadId } : {}),
+                reply_to_message_id: msg.message_id,
+                text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
+                parse_mode: 'HTML'
+              })
+            });
+          }
+          return NextResponse.json({ ok: false, error: errorMsg });
         }
       }
     }
