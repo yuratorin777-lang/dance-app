@@ -403,6 +403,7 @@ export async function POST(req: NextRequest) {
               `💰 Сумма: <b>${payload.amount} ₽</b>\n` +
               `➕ Начислено занятий: <b>${result.classes_added || payload.classesAdded}</b>.`;
 
+          // 1. Отвечаем в тот чат/топик, где было загружено фото
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -414,6 +415,23 @@ export async function POST(req: NextRequest) {
               parse_mode: 'HTML'
             })
           });
+
+          // 2. Если файл пришел из ЛС, а GAS вернул target-чат/топик группы ученика, дублируем сообщение туда
+          const targetGroupChatId = result.chat_id;
+          const targetTopicId = isMedical ? result.topic_medical_id : result.topic_payments_id;
+
+          if (targetGroupChatId && chatId !== targetGroupChatId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: targetGroupChatId,
+                ...(targetTopicId ? { message_thread_id: Number(targetTopicId) } : {}),
+                text: successText,
+                parse_mode: 'HTML'
+              })
+            }).catch(e => console.error('Error forwarding message to group topic:', e));
+          }
 
           return NextResponse.json({ ok: true });
         } else {
