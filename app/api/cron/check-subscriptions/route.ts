@@ -34,9 +34,26 @@ export async function GET(req: NextRequest) {
     let sentCount = 0;
 
     for (const item of items) {
-      const { studentName, balanceLessons, validUntil, diffDays, parentTgId, groupChatId, paymentsTopicId, triggerReason } = item;
+      const { 
+        studentName, 
+        balanceLessons, 
+        validUntil, 
+        diffDays, 
+        parentTgId, 
+        groupChatId, 
+        paymentsTopicId, 
+        triggerReason,
+        phone,       // Если Google Script возвращает номер телефона
+        parentPhone  // Вспомогательный вариант наименования
+      } = item;
 
       const formattedDate = formatDate(validUntil);
+
+      // Формируем динамическую ссылку на вход в ЛК по номеру телефона
+      const userPhone = phone || parentPhone || '';
+      const loginUrl = userPhone 
+        ? `https://dancekids-lk.vercel.app/login?phone=${encodeURIComponent(userPhone)}`
+        : `https://dancekids-lk.vercel.app/login`;
 
       // Формируем упоминание родителя из Колонки F
       let parentMention = '';
@@ -77,14 +94,14 @@ export async function GET(req: NextRequest) {
 
       if (!text) continue;
 
-      // 1. Отправляем в ЛС родителю (только если в колонке F записан числовой ID, а не @username)
+      // 1. Отправляем в ЛС родителю (только если в колонке записан числовой ID, а не @username)
       if (parentTgId && !isNaN(Number(parentTgId))) {
-        await sendTelegramMessage(botToken, parentTgId, text);
+        await sendTelegramMessage(botToken, parentTgId, text, loginUrl);
       }
 
       // 2. Отправляем в топик «Вопросы по оплате» рабочей группы
       if (groupChatId && paymentsTopicId) {
-        await sendTelegramMessage(botToken, groupChatId, text, Number(paymentsTopicId));
+        await sendTelegramMessage(botToken, groupChatId, text, loginUrl, Number(paymentsTopicId));
       }
 
       sentCount++;
@@ -97,7 +114,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-async function sendTelegramMessage(token: string, chatId: string | number, text: string, threadId?: number) {
+async function sendTelegramMessage(token: string, chatId: string | number, text: string, loginUrl: string, threadId?: number) {
   try {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
@@ -107,6 +124,16 @@ async function sendTelegramMessage(token: string, chatId: string | number, text:
         message_thread_id: threadId,
         text: text,
         parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: '💳 Оплатить в Личном Кабинете',
+                url: loginUrl
+              }
+            ]
+          ]
+        }
       }),
     });
   } catch (err) {
