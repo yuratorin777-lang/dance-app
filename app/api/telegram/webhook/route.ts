@@ -272,142 +272,76 @@ export async function POST(req: NextRequest) {
     }
 
     // ------------------------------------------------------------------------
-    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ В ТОПИКАХ ГРУППЫ И ЛС
+    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ (ТЕЛЕГРАМ + ЛИЧНЫЙ КАБИНЕТ)
     // ------------------------------------------------------------------------
-    // Поддерживаем как новые сообщения, так и отредактированные
     const msg = update.message || update.edited_message;
+    const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT';
 
-    if (msg && (msg.photo || msg.document)) {
-      const chatId = msg.chat.id;
-      const threadId = msg.message_thread_id;
-      const caption = (msg.caption || '').trim();
+    if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
+      let chatId = msg?.chat?.id || null;
+      let threadId = msg?.message_thread_id || null;
+      let caption = (msg?.caption || update.searchQuery || '').trim();
 
-      const fileName = msg.document?.file_name || '';
-      const lowerCaption = caption.toLowerCase();
-      const lowerFileName = fileName.toLowerCase();
+      let isMedical = update.action === 'APPLY_FREEZE';
+      let fileUrl = update.fileUrl || '';
+      let studentId = update.studentId || null;
 
-      // Определение флага справки (по подписи, имени файла или ID топика)
-      let isMedical = lowerCaption.includes('справка') || 
-                      lowerCaption.includes('больничный') || 
-                      lowerFileName.includes('справка') || 
-                      lowerFileName.includes('больничный') ||
-                      (process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID));
+      // --- ЕСЛИ ЗАПРОС ИЗ ТЕЛЕГРАМ-ЧАТА ---
+      if (msg) {
+        const fileName = msg.document?.file_name || '';
+        const lowerCaption = caption.toLowerCase();
+        const lowerFileName = fileName.toLowerCase();
 
-      const fileId = msg.photo 
-        ? msg.photo[msg.photo.length - 1].file_id 
-        : msg.document?.file_id;
+        isMedical = lowerCaption.includes('справка') || 
+                    lowerCaption.includes('больничный') || 
+                    lowerFileName.includes('справка') || 
+                    lowerFileName.includes('больничный') ||
+                    (process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID));
 
-      let fileUrl = '';
-      let imageBase64: string | null = null;
+        const fileId = msg.photo 
+          ? msg.photo[msg.photo.length - 1].file_id 
+          : msg.document?.file_id;
 
-      if (fileId && botToken) {
-        try {
-          const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-          const fileData = await fileRes.json();
-          if (fileData.ok && fileData.result?.file_path) {
-            fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-            imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-          }
-        } catch (e) {
-          console.error('Error fetching Telegram file URL:', e);
-        }
-      }
+        let imageBase64: string | null = null;
 
-      const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
-      const studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
-
-      // 1. ОПРЕДЕЛЯЕМ MIME-ТИП (для PDF передаём application/pdf, для фото — image/jpeg)
-      const mimeType = msg.document?.mime_type || 'image/jpeg';
-
-      let ocrData: any = null;
-
-      // 2. Распознавание через Gemini
-      if (imageBase64) {
-        try {
-          if (isMedical) {
-            ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          } else {
-            // Умная проверка: если подпись не указала явно чек, сначала проверяем на справку
-            const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-            
-            if (medicalCheck && medicalCheck.is_valid) {
-              ocrData = medicalCheck;
-              isMedical = true; // Автоматически переключаем тип на справку!
-            } else {
-              ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+        if (fileId && botToken) {
+          try {
+            const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+            const fileData = await fileRes.json();
+            if (fileData.ok && fileData.result?.file_path) {
+              fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+              imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
             }
+          } catch (e) {
+            console.error('Error fetching Telegram file URL:', e);
           }
-        } catch (err) {
-          console.error('Gemini OCR process error:', err);
-        }
-      }
-
-      // Требуем подпись только для чеков. Для справок подпись опциональна (возьмем ФИО из документа)
-      if (!isMedical && !caption) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: threadId } : {}),
-            reply_to_message_id: msg.message_id,
-            text: '⚠️ Пожалуйста, добавьте подпись к чеку с Фамилией и Именем ребенка (например: <i>Иванова Маша</i>).',
-            parse_mode: 'HTML'
-          })
-        });
-        return NextResponse.json({ ok: true });
-      }
-
-      if (googleScriptUrl) {
-        let payload: Record<string, any> = {};
-
-        if (isMedical) {
-          payload = {
-            action: 'APPLY_FREEZE',
-            studentId: studentId,
-            searchQuery: caption || ocrData?.child_name || '',
-            startDate: ocrData?.start_date || null,
-            endDate: ocrData?.end_date || null,
-            days: 7,
-            fileUrl: fileUrl,
-            rawCaption: caption,
-            reason: ocrData?.diagnosis || null
-          };
-        } else {
-          const parsedAmount = ocrData?.amount ? Number(ocrData.amount) : 4000;
-          payload = {
-            action: 'PROCESS_RECEIPT',
-            studentId: studentId,
-            searchQuery: caption || ocrData?.sender_name || '',
-            amount: parsedAmount,
-            classesAdded: Math.floor(parsedAmount / 500) || 8,
-            fileUrl: fileUrl,
-            rawCaption: caption,
-            timestamp: ocrData?.timestamp || null,
-            paymentType: ocrData?.payment_type || null
-          };
         }
 
-        const result = await callAppsScript(googleScriptUrl, payload);
+        const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
+        studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
 
-        if (result && (result.status === 'success' || result.ok)) {
-          const studentName = result.student_name || result.studentId || 'ученика';
-          const successText = isMedical 
-            ? `🏥 <b>Справка принята!</b>\n` +
-              `👤 Ученик: <b>${studentName}</b>\n` +
-              `📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>\n` +
-              `❄️ Дней продления: <b>${result.days_frozen || '—'}</b>`
-            : `💳 <b>Оплата принята!</b>\n` +
-              `👤 Ученик: <b>${studentName}</b>\n` +
-              `💰 Сумма: <b>${payload.amount} ₽</b>\n` +
-              `➕ Начислено занятий: <b>${result.classes_added || payload.classesAdded}</b>.`;
+        const mimeType = msg.document?.mime_type || 'image/jpeg';
+        let ocrData: any = null;
 
-          const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id;
-          const targetTopicId = isMedical 
-            ? (result.topic_medical_id || result.medical_topic_id) 
-            : (result.topic_payments_id || result.payment_topic_id);
+        if (imageBase64) {
+          try {
+            if (isMedical) {
+              ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+            } else {
+              const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+              if (medicalCheck && medicalCheck.is_valid) {
+                ocrData = medicalCheck;
+                isMedical = true;
+              } else {
+                ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+              }
+            }
+          } catch (err) {
+            console.error('Gemini OCR process error:', err);
+          }
+        }
 
-          // 1. Если запрос был из Telegram-бота (есть chatId) — отвечаем пользователю в чат
+        if (!isMedical && !caption) {
           if (chatId) {
             await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
               method: 'POST',
@@ -416,14 +350,68 @@ export async function POST(req: NextRequest) {
                 chat_id: chatId,
                 ...(threadId ? { message_thread_id: threadId } : {}),
                 reply_to_message_id: msg.message_id,
+                text: '⚠️ Пожалуйста, добавьте подпись к чеку с Фамилией и Именем ребенка.',
+                parse_mode: 'HTML'
+              })
+            });
+          }
+          return NextResponse.json({ ok: true });
+        }
+      }
+
+      // --- ФОРМИРУЕМ PAYLOAD ДЛЯ GOOGLE APPS SCRIPT ---
+      if (googleScriptUrl) {
+        let payload: Record<string, any> = isDirectApiCall 
+          ? update 
+          : (isMedical 
+            ? {
+                action: 'APPLY_FREEZE',
+                studentId: studentId,
+                searchQuery: caption,
+                fileUrl: fileUrl
+              }
+            : {
+                action: 'PROCESS_RECEIPT',
+                studentId: studentId,
+                searchQuery: caption,
+                fileUrl: fileUrl
+              });
+
+        const result = await callAppsScript(googleScriptUrl, payload);
+
+        if (result && (result.status === 'success' || result.ok)) {
+          const studentName = result.student_name || result.studentId || payload.studentId || 'ученика';
+          const successText = isMedical 
+            ? `🏥 <b>Справка принята из ЛК!</b>\n` +
+              `👤 Ученик: <b>${studentName}</b>\n` +
+              `📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>\n` +
+              `❄️ Дней продления: <b>${result.days_frozen || payload.days || '—'}</b>`
+            : `💳 <b>Оплата принята из ЛК!</b>\n` +
+              `👤 Ученик: <b>${studentName}</b>\n` +
+              `💰 Сумма: <b>${payload.amount || '—'} ₽</b>`;
+
+          const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id;
+          const targetTopicId = isMedical 
+            ? (result.topic_medical_id || result.medical_topic_id) 
+            : (result.topic_payments_id || result.payment_topic_id);
+
+          // 1. Отвечаем в личный чат Telegram (если отправка была из бота)
+          if (chatId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                ...(threadId ? { message_thread_id: threadId } : {}),
+                ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
                 text: successText,
                 parse_mode: 'HTML'
               })
             });
           }
 
-          // 2. Если это ЛС или запрос из ЛК, дублируем сообщение в топик рабочей группы Telegram
-          if (targetGroupChatId && chatId !== targetGroupChatId) {
+          // 2. ОТПРАВЛЯЕМ В РАБОЧИЙ ТОПИК ГРУППЫ (Работает и для ЛК, и для ЛС!)
+          if (targetGroupChatId) {
             await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -433,21 +421,18 @@ export async function POST(req: NextRequest) {
                 text: successText,
                 parse_mode: 'HTML'
               })
-            }).catch(e => console.error('Error forwarding message to group topic:', e));
+            }).catch(e => console.error('Error sending message to group topic:', e));
           }
 
           return NextResponse.json({ ok: true, result });
         } else {
-          const errorMsg = result?.message || 'Не удалось найти ученика по указанной подписи или документу. Проверьте ФИО.';
-          
+          const errorMsg = result?.message || 'Не удалось обработать запрос.';
           if (chatId) {
             await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 chat_id: chatId,
-                ...(threadId ? { message_thread_id: threadId } : {}),
-                reply_to_message_id: msg.message_id,
                 text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
                 parse_mode: 'HTML'
               })
