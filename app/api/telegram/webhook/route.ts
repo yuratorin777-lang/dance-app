@@ -168,6 +168,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// Заголовки CORS для корректных запросов из PWA / Личного кабинета
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+// 🟢 Обработчик preflight-запросов CORS
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
 // ============================================================================
 // 🚀 ОСНОВНОЙ РОУТ WEBHOOK (POST)
 // ============================================================================
@@ -177,20 +189,6 @@ export async function POST(req: NextRequest) {
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const googleScriptUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL || '';
     const firstLessonTopicId = process.env.TELEGRAM_FIRST_LESSON_TOPIC_ID || '3';
-
-    // ------------------------------------------------------------------------
-    // ❄️ 1. ПРЯМАЯ ЗАЯВКА НА ЗАМОРОЗКУ ИЗ ЛК РОДИТЕЛЯ (PWA / API)
-    // ------------------------------------------------------------------------
-    if (update.action === 'request_freeze' || update.action === 'requestFreeze') {
-      if (googleScriptUrl) {
-        const result = await callAppsScript(googleScriptUrl, {
-          action: 'request_freeze',
-          ...update
-        });
-        return NextResponse.json(result || { status: 'success' }, { headers: corsHeaders });
-      }
-      return NextResponse.json({ status: 'error', message: 'No Google Script URL configured' }, { status: 400, headers: corsHeaders });
-    }
 
     // ------------------------------------------------------------------------
     // SUB-SECTION 2.1: MESSAGES & /START COMMAND (PARENT ENTRYPOINT)
@@ -240,7 +238,7 @@ export async function POST(req: NextRequest) {
                 parse_mode: 'HTML'
               })
             });
-            return NextResponse.json({ ok: true });
+            return NextResponse.json({ ok: true }, { headers: corsHeaders });
           }
 
           const greetingText = `Здравствуйте, <b>${parentName}</b>! Рады приветствовать вас и <b>${childName}</b> в студии Dance Kids! 🩰\n\nВыберите удобный день для первого пробного занятия:`;
@@ -256,7 +254,7 @@ export async function POST(req: NextRequest) {
             })
           });
 
-          return NextResponse.json({ ok: true });
+          return NextResponse.json({ ok: true }, { headers: corsHeaders });
         } else {
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
@@ -266,20 +264,68 @@ export async function POST(req: NextRequest) {
               text: 'Здравствуйте! Для записи на занятие используйте персональную ссылку с нашего сайта.',
             })
           });
-          return NextResponse.json({ ok: true });
+          return NextResponse.json({ ok: true }, { headers: corsHeaders });
         }
       }
     }
 
     // ------------------------------------------------------------------------
+    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК
+    // (Сюда теперь ровно и без перехватов приходят все варианты REQUEST_FREEZE_FROM_LK / request_freeze)
+    // ------------------------------------------------------------------------
+    // [Вставляем обновленный блок 2.1.1 из предыдущего ответа]
+
+   // ------------------------------------------------------------------------
 // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК
 // ------------------------------------------------------------------------
 
-// 🟢 1. ИЗОЛИРОВАННАЯ ОБРАБОТКА ЗАМОРОЗКИ ИЗ ЛК (ВЫХОДИМ СРАЗУ)
-if (update.action === 'REQUEST_FREEZE_FROM_LK') {
+// 🟢 1. ИЗОЛИРОВАННАЯ ОБРАБОТКА ЗАМОРОЗКИ ИЗ ЛК (С КНОПКАМИ В АДМИН-ЧАТ)
+if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze') {
   if (googleScriptUrl) {
     try {
-      const result = await callAppsScript(googleScriptUrl, update);
+      // 1. Передаем данные в Apps Script
+      const result = await callAppsScript(googleScriptUrl, {
+        action: 'APPLY_FREEZE',
+        leadId: update.leadId || update.studentId,
+        startDate: update.startDate,
+        endDate: update.endDate,
+        reason: update.reason || 'Запрос заморозки из ЛК',
+        docUrl: update.fileUrl || update.docUrl || '',
+        source: 'LK'
+      });
+
+      const freezeId = result?.freezeId || update.leadId || Date.now();
+      const adminGroupId = process.env.TELEGRAM_ADMIN_GROUP_ID;
+      const freezeTopicId = process.env.TELEGRAM_FREEZE_TOPIC_ID;
+
+      // 2. Отправляем уведомление с кнопками В АДМИНСКИЙ ЧАТ
+      if (adminGroupId && botToken) {
+        const adminMsg = `❄️ <b>Запрос на заморозку из ЛК</b>\n\n` +
+          `👤 <b>Ученик/Лид:</b> ${update.studentName || update.leadId || 'Не указан'}\n` +
+          `📅 <b>Период:</b> с ${update.startDate || '—'} по ${update.endDate || '—'}\n` +
+          `📝 <b>Причина:</b> ${update.reason || 'Справка/Заявление'}\n` +
+          `${update.fileUrl ? `📄 <a href="${update.fileUrl}">Открыть документ</a>` : ''}`;
+
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: adminGroupId,
+            ...(freezeTopicId ? { message_thread_id: Number(freezeTopicId) } : {}),
+            text: adminMsg,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '✅ Одобрить', callback_data: `freeze_approve:${freezeId}` },
+                  { text: '❌ Отклонить', callback_data: `freeze_reject:${freezeId}` }
+                ]
+              ]
+            }
+          })
+        }).catch(err => console.error('Error sending freeze alert to admin group:', err));
+      }
+
       return NextResponse.json({ ok: true, result });
     } catch (err) {
       console.error('Error forwarding freeze request to Apps Script:', err);
@@ -289,7 +335,7 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK') {
   return NextResponse.json({ ok: false, error: 'No Script URL' }, { status: 500 });
 }
 
-// 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМИ / ДРУГИЕ ДЕЙСТВИЯ)
+// 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API)
 const msg = update.message || update.edited_message;
 const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT';
 
@@ -301,6 +347,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let isMedical = update.action === 'APPLY_FREEZE';
   let fileUrl = update.fileUrl || '';
   let studentId = update.studentId || null;
+  let ocrData: any = null;
 
   // --- ЕСЛИ ЗАПРОС ИЗ ТЕЛЕГРАМ-ЧАТА ---
   if (msg) {
@@ -337,8 +384,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
 
     const mimeType = msg.document?.mime_type || 'image/jpeg';
-    let ocrData: any = null;
 
+    // Сканирование через Gemini OCR
     if (imageBase64) {
       try {
         if (isMedical) {
@@ -356,23 +403,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         console.error('Gemini OCR process error:', err);
       }
     }
-
-    if (!isMedical && !caption) {
-      if (chatId) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: threadId } : {}),
-            reply_to_message_id: msg.message_id,
-            text: '⚠️ Пожалуйста, добавьте подпись к чеку с Фамилией и Именем ребенка.',
-            parse_mode: 'HTML'
-          })
-        });
-      }
-      return NextResponse.json({ ok: true });
-    }
   }
 
   // --- ФОРМИРУЕМ PAYLOAD ДЛЯ GOOGLE APPS SCRIPT ---
@@ -382,34 +412,43 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           action: 'APPLY_FREEZE',
           studentId: studentId,
           searchQuery: caption,
-          fileUrl: fileUrl
+          fileUrl: fileUrl,
+          startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
+          endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
+          reason: ocrData?.reason || caption || 'Справка из Telegram',
+          source: msg ? 'TELEGRAM' : 'LK'
         }
       : {
           action: 'PROCESS_RECEIPT',
           studentId: studentId,
           searchQuery: caption,
-          fileUrl: fileUrl
+          fileUrl: fileUrl,
+          amount: ocrData?.amount || update.amount || null,
+          date: ocrData?.date || update.date || null,
+          source: msg ? 'TELEGRAM' : 'LK'
         };
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
     if (result && (result.status === 'success' || result.ok)) {
       const studentName = result.student_name || result.studentId || payload.studentId || 'ученика';
+      const isFromLK = !msg;
+
       const successText = isMedical 
-        ? `🏥 <b>Справка принята из ЛК!</b>\n` +
+        ? `🏥 <b>Справка успешно принята ${isFromLK ? 'из ЛК' : ''}!</b>\n` +
           `👤 Ученик: <b>${studentName}</b>\n` +
-          `📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>\n` +
-          `❄️ Дней продления: <b>${result.days_frozen || payload.days || '—'}</b>`
-        : `💳 <b>Оплата принята из ЛК!</b>\n` +
+          `📅 Период: <b>${result.startDate || payload.startDate || 'по справке'}</b> по <b>${result.endDate || payload.endDate || '—'}</b>\n` +
+          `❄️ Дней продления: <b>${result.days_frozen || result.days || '—'}</b>`
+        : `💳 <b>Оплата принята ${isFromLK ? 'из ЛК' : ''}!</b>\n` +
           `👤 Ученик: <b>${studentName}</b>\n` +
-          `💰 Сумма: <b>${payload.amount || '—'} ₽</b>`;
+          `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
 
       const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id;
       const targetTopicId = isMedical 
         ? (result.topic_medical_id || result.medical_topic_id) 
         : (result.topic_payments_id || result.payment_topic_id);
 
-      // 1. Отвечаем в личный чат Telegram (если отправка была из бота)
+      // 1. Отвечаем в чат отправки (если это Telegram)
       if (chatId) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
@@ -424,7 +463,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         });
       }
 
-      // 2. ОТПРАВЛЯЕМ В РАБОЧИЙ ТОПИК ГРУППЫ
+      // 2. ОТПРАВЛЯЕМ В РАБОЧИЙ ТОПИК ГРУППЫ АДМИНОВ / ПРЕПОДАВАТЕЛЕЙ
       if (targetGroupChatId) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
