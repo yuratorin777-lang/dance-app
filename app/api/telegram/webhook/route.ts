@@ -275,7 +275,9 @@ export async function POST(req: NextRequest) {
     // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ (ТЕЛЕГРАМ + ЛИЧНЫЙ КАБИНЕТ)
     // ------------------------------------------------------------------------
     const msg = update.message || update.edited_message;
-    const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT';
+    const isDirectApiCall = update.action === 'APPLY_FREEZE' || 
+                            update.action === 'PROCESS_RECEIPT' || 
+                            update.action === 'REQUEST_FREEZE_FROM_LK';
 
     if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       let chatId = msg?.chat?.id || null;
@@ -380,6 +382,15 @@ export async function POST(req: NextRequest) {
         const result = await callAppsScript(googleScriptUrl, payload);
 
         if (result && (result.status === 'success' || result.ok)) {
+          // ------------------------------------------------------------------------
+          // ❄️ ИСКЛЮЧЕНИЕ ДЛЯ ЗАМОРОЗКИ ИЗ ЛК
+          // Apps Script САМ отправляет карточку с кнопками в админский топик 295.
+          // Здесь отправку родителю делать НЕ нужно!
+          // ------------------------------------------------------------------------
+          if (update.action === 'REQUEST_FREEZE_FROM_LK') {
+            return NextResponse.json({ ok: true, result });
+          }
+
           const studentName = result.student_name || result.studentId || payload.studentId || 'ученика';
           const successText = isMedical 
             ? `🏥 <b>Справка принята из ЛК!</b>\n` +
