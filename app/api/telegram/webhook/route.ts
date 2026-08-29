@@ -423,57 +423,49 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // 3. ОТПРАВКА В GOOGLE APPS SCRIPT
-if (googleScriptUrl) {
-  const targetAction = isMedical ? 'APPLY_FREEZE' : 'PROCESS_RECEIPT';
+  if (googleScriptUrl) {
+    const targetAction = isMedical ? 'APPLY_FREEZE' : 'PROCESS_RECEIPT';
 
-  // ПРИОРИТЕТ ДЛЯ ПОИСКА:
-  // 1. Извлеченный STD/LD ID из подписи
-  // 2. Явный ID из запроса (ЛК)
-  // 3. Текст из подписи к фото (caption — где ФИО)
-  // 4. Имя из Gemini OCR
-  let searchQuery = studentId || update.studentId || '';
-
-  if (!searchQuery) {
-    if (caption) {
-      // Если подпись есть (например, "Иванова Анна") — берем её в первую очередь!
-      searchQuery = caption;
-    } else {
-      // Если подписи к фото нет — берем то, что вытащил OCR
-      searchQuery = isMedical 
-        ? (ocrData?.childName || ocrData?.child_name || '') 
-        : (ocrData?.payerName || ocrData?.studentName || '');
+    // ВАЖНО: Определяем чистое имя/запрос для поиска ученика
+    let searchQuery = studentId || update.studentId || '';
+    
+    if (!searchQuery) {
+      if (isMedical) {
+        searchQuery = ocrData?.childName || ocrData?.child_name || caption;
+      } else {
+        // Для чека НЕ передаем текст подписи "Оплата за сентябрь" в качестве имени ученика!
+        searchQuery = ocrData?.payerName || ocrData?.studentName || ocrData?.childName || caption;
+      }
     }
-  }
 
-  const payload: Record<string, any> = {
-    action: targetAction,
-    studentId: studentId || update.studentId || null,
-    studentName: searchQuery, // Передаем явным полем для GAS
-    searchQuery: searchQuery,
-    rawCaption: caption,
-    fileUrl: fileUrl,
-    source: msg ? 'TELEGRAM' : 'LK',
-    telegram_id: chatId,
-    chat_id: chatId,
-    thread_id: threadId,
-    topic_id: threadId,
-    message_id: msg?.message_id || null
-  };
+    const payload: Record<string, any> = {
+      action: targetAction,
+      ...(studentId ? { studentId } : {}),
+      searchQuery: searchQuery,
+      fileUrl: fileUrl,
+      source: msg ? 'TELEGRAM' : 'LK',
+      telegram_id: chatId,
+      chat_id: chatId,
+      thread_id: threadId,
+      topic_id: threadId,
+      message_id: msg?.message_id || null
+    };
 
-  if (isMedical) {
-    payload.child_name = ocrData?.childName || ocrData?.child_name || searchQuery;
-    payload.startDate = ocrData?.startDate || ocrData?.start_date || update.startDate || null;
-    payload.endDate = ocrData?.endDate || ocrData?.end_date || update.endDate || null;
-    payload.reason = ocrData?.reason || ocrData?.diagnosis || caption || 'Справка';
-    payload.days = ocrData?.days || null;
-  } else {
-    payload.amount = ocrData?.amount || update.amount || null;
-    payload.date = ocrData?.date || update.date || null;
-  }
+    if (isMedical) {
+      payload.child_name = ocrData?.childName || ocrData?.child_name || searchQuery;
+      payload.startDate = ocrData?.startDate || ocrData?.start_date || update.startDate || null;
+      payload.endDate = ocrData?.endDate || ocrData?.end_date || update.endDate || null;
+      payload.reason = ocrData?.reason || ocrData?.diagnosis || caption || 'Справка';
+      payload.days = ocrData?.days || null;
+    } else {
+      payload.amount = ocrData?.amount || update.amount || null;
+      payload.date = ocrData?.date || update.date || null;
+      payload.payerName = ocrData?.payerName || null;
+    }
 
-  console.log(`[PAYLOAD OUT] Action: ${targetAction} | Target Student: ${searchQuery}`);
+    console.log(`[PAYLOAD OUT] Action: ${targetAction} | Query: ${searchQuery}`);
 
-  const result = await callAppsScript(googleScriptUrl, payload);
+    const result = await callAppsScript(googleScriptUrl, payload);
 
     // Ошибка поиска в базе
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
