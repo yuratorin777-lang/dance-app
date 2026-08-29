@@ -308,7 +308,7 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
   return NextResponse.json({ ok: false, error: 'No Script URL' }, { status: 500, headers: corsHeaders });
 }
 
-// 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API)
+// 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ ИЗ ТЕЛЕГРАМ ИЛИ DIRECT API
 const msg = update.message || update.edited_message;
 const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT';
 
@@ -318,16 +318,17 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
   let isMedical = update.action === 'APPLY_FREEZE';
-  let fileUrl = update.fileUrl || '';
+  let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // --- ЕСЛИ ЗАПРОС ИЗ ТЕЛЕГРАМ-ЧАТА ---
+  // 1️⃣ ОБРАБОТКА НАПРЯМУЮ ИЗ ТЕЛЕГРАМ-ЧАТА
   if (msg) {
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
+    // Определяем, справка это или чек
     isMedical = lowerCaption.includes('справка') || 
                 lowerCaption.includes('больничный') || 
                 lowerFileName.includes('справка') || 
@@ -340,6 +341,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     let imageBase64: string | null = null;
 
+    // Скачиваем файл из Telegram
     if (fileId && botToken) {
       try {
         const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
@@ -353,11 +355,13 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
 
+    // Поиск ID ученика в подписи (STD-123)
     const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
     studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
 
     const mimeType = msg.document?.mime_type || 'image/jpeg';
 
+    // Запуск Gemini OCR для анализа документа из TG
     if (imageBase64) {
       try {
         if (isMedical) {
@@ -375,9 +379,23 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         console.error('Gemini OCR process error:', err);
       }
     }
+  } 
+  // 2️⃣ ОБРАБОТКА ДЛЯ DIRECT API (ИЗ ЛК)
+  else if (isDirectApiCall && fileUrl) {
+    try {
+      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+      if (imageBase64) {
+        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+        ocrData = isMedical 
+          ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
+          : await analyzeReceipt(imageBase64, mimeType, caption);
+      }
+    } catch (err) {
+      console.error('Gemini OCR error for direct LK API call:', err);
+    }
   }
 
-  // --- ФОРМИРУЕМ PAYLOAD ДЛЯ GOOGLE APPS SCRIPT ---
+  // 3️⃣ ОТПРАВКА ДАННЫХ В GOOGLE APPS SCRIPT
   if (googleScriptUrl) {
     let payload: Record<string, any> = isMedical 
       ? {
@@ -406,7 +424,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
-    // 🛑 ПРОВЕРЯЕМ: Если скрипт вернул ошибку "Ученик не найден", выводим только понятное предупреждение
+    // Если ошибка поиска ученика — пишем Родителю прямо в Telegram-чат
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
       const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Пожалуйста, укажите ID ученика в подписи к фото (например: STD-123).';
       
@@ -423,16 +441,12 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           })
         });
       }
-      return NextResponse.json({ ok: true, handled_error: errorMsg }, { headers: corsHeaders });
+      return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // 🟢 ЕСЛИ ВСЁ УСПЕШНО И УЧЕНИК НАЙДЕН
+    // Если успешная отправка из ЛК — отправляем карточку админам (из TG скрипт ответит сам)
     if (result && (result.status === 'success' || result.ok)) {
-      const isFromLK = !msg;
-
-      // 💡 Если запрос пришел из ЛК — Next.js сам уведомит админов/пользователя.
-      // 💡 Если запрос из Telegram-чата — Google Apps Script УЖЕ отправил сообщение, Next.js ничего не дублирует!
-      if (isFromLK) {
+      if (!msg && botToken) {
         const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
         const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
 
@@ -463,11 +477,10 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         }
       }
 
-      return NextResponse.json({ ok: true, result }, { headers: corsHeaders });
+      return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
     }
   }
   
-  // ⛔ КРИТИЧЕСКИЙ FIX: Прерываем обработку файла, чтобы код не шел дальше ниже по файлу
   return NextResponse.json({ ok: true }, { headers: corsHeaders });
 }
 
