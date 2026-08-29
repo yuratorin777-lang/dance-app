@@ -522,50 +522,62 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
 
 // 📌 SECTION: ОБРАБОТКА КНОПОК ЗАМОРОЗКИ (ОДОБРИТЬ / ОТКЛОНИТЬ ИЗ ТЕЛЕГРАМ)
-      if (callbackData.startsWith('freeze_approve:') || callbackData.startsWith('freeze_reject:')) {
-        const isApprove = callbackData.startsWith('freeze_approve:');
-        const phone = callbackData.split(':')[1];
-        const statusText = isApprove ? 'Заморожен' : 'Активен';
+if (callbackData.startsWith('freeze_approve:') || callbackData.startsWith('freeze_reject:')) {
+  const isApprove = callbackData.startsWith('freeze_approve:');
+  const payloadId = callbackData.split(':')[1];
+  const statusText = isApprove ? 'Заморожен' : 'Активен';
+  const originalText = message.text || '';
 
-        // 1. Отправляем запрос в GAS для обновления колонки K в Google Таблице
-        if (googleScriptUrl) {
-          await callAppsScript(googleScriptUrl, {
-            action: 'update_freeze_status',
-            phone: phone,
-            status: statusText
-          });
-        }
+  // Парсим телефон из текста сообщения (ищет строку "Телефон: ...")
+  const phoneMatch = originalText.match(/(?:Телефон|Ученик\/Лид):\s*([^\n]+)/i);
+  const extractedPhone = phoneMatch ? phoneMatch[1].trim() : payloadId;
 
-        // 2. Меняем текст сообщения в топике 295, чтобы было видно решение администратора
-        const originalText = message.text || '';
-        const updatedStatusHeader = isApprove
-          ? `✅ <b>ЗАМОРОЗКА ОДОБРЕНА</b>\n\n`
-          : `❌ <b>ЗАМОРОЗКА ОТКЛОНЕНА</b>\n\n`;
+  // Парсим даты из текста сообщения (ищет "с XX.XX.XXXX по YY.YY.YYYY")
+  const dateMatch = originalText.match(/Период:\s*с\s*([^\s]+)\s*по\s*([^\n\s]+)/i);
+  const startDate = isApprove && dateMatch ? dateMatch[1] : '';
+  const endDate = isApprove && dateMatch ? dateMatch[2] : '';
 
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: updatedStatusHeader + originalText,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [] }
-          })
-        });
+  // 1. Отправляем полный запрос в Google Apps Script (Колонки K, L, M)
+  if (googleScriptUrl) {
+    await callAppsScript(googleScriptUrl, {
+      action: 'update_freeze_status',
+      phone: extractedPhone,
+      studentId: payloadId,
+      status: statusText,
+      startDate: startDate, // 👈 Дата в колонку L
+      endDate: endDate     // 👈 Дата в колонку M
+    });
+  }
 
-        // 3. Закрываем плашку нажатия кнопки в ТГ
-        await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            callback_query_id: callbackQuery.id,
-            text: isApprove ? 'Заморозка одобрена!' : 'Заморозка отклонена!'
-          })
-        });
+  // 2. Меняем текст сообщения в топике, фиксируя решение
+  const updatedStatusHeader = isApprove
+    ? `✅ <b>ЗАМОРОЗКА ОДОБРЕНА</b>\n\n`
+    : `❌ <b>ЗАМОРОЗКА ОТКЛОНЕНА</b>\n\n`;
 
-        return NextResponse.json({ ok: true });
-      }
+  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text: updatedStatusHeader + originalText,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [] }
+    })
+  });
+
+  // 3. Закрываем всплывающее уведомление в Telegram
+  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      callback_query_id: callbackQuery.id,
+      text: isApprove ? 'Заморозка одобрена!' : 'Заморозка отклонена!'
+    })
+  });
+
+  return NextResponse.json({ ok: true });
+}
 
       // 📌 SECTION 2.3: INFO MENU HANDLERS
       if (callbackData.startsWith('info_')) {
