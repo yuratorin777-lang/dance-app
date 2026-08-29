@@ -389,7 +389,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
           reason: ocrData?.reason || caption || 'Справка из Telegram',
           source: msg ? 'TELEGRAM' : 'LK',
-          telegram_id: chatId // 👈 ПЕРЕДАЕМ TELEGRAM ID, ЧТОБЫ ТАБЛИЦА НАХОДИЛА УЧЕНИКА
+          telegram_id: chatId,
+          chat_id: chatId
         }
       : {
           action: 'PROCESS_RECEIPT',
@@ -399,31 +400,54 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           amount: ocrData?.amount || update.amount || null,
           date: ocrData?.date || update.date || null,
           source: msg ? 'TELEGRAM' : 'LK',
-          telegram_id: chatId // 👈 ПЕРЕДАЕМ TELEGRAM ID, ЧТОБЫ ТАБЛИЦА НАХОДИЛА УЧЕНИКА
+          telegram_id: chatId,
+          chat_id: chatId
         };
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
+    // 🛑 ПРОВЕРЯЕМ: Если скрипт вернул ошибку "Ученик не найден", выводим только понятное предупреждение
+    if (result && (result.status === 'error' || result.ok === false || result.error)) {
+      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Пожалуйста, укажите ID ученика в подписи к фото (например: STD-123).';
+      
+      if (chatId) {
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            ...(threadId ? { message_thread_id: threadId } : {}),
+            ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
+            text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
+            parse_mode: 'HTML'
+          })
+        });
+      }
+      return NextResponse.json({ ok: true, handled_error: errorMsg }, { headers: corsHeaders });
+    }
+
+    // 🟢 ЕСЛИ ВСЁ УСПЕШНО И УЧЕНИК НАЙДЕН
     if (result && (result.status === 'success' || result.ok)) {
-      const studentName = result.student_name || result.studentId || payload.studentId || 'ученика';
+      const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
+      
+      // Страховка: если имя так и не пришло, не пишем "ученика"
+      const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
       const isFromLK = !msg;
 
       const successText = isMedical 
         ? `🏥 <b>Справка успешно принята ${isFromLK ? 'из ЛК' : ''}!</b>\n` +
-          `👤 Ученик: <b>${studentName}</b>\n` +
+          `👤 Ученик: ${displayName}\n` +
           `📅 Период: <b>${result.startDate || payload.startDate || 'по справке'}</b> по <b>${result.endDate || payload.endDate || '—'}</b>\n` +
           `❄️ Дней продления: <b>${result.days_frozen || result.days || '—'}</b>`
         : `💳 <b>Оплата принята ${isFromLK ? 'из ЛК' : ''}!</b>\n` +
-          `👤 Ученик: <b>${studentName}</b>\n` +
+          `👤 Ученик: ${displayName}\n` +
           `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
 
       const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
-      
-      // Четко определяем топик: если указан в отчете — берем его, иначе берем из ENV
       const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
       const targetTopicId = result.topic_medical_id || result.medical_topic_id || result.topic_payments_id || result.payment_topic_id || envTopicId;
 
-      // 1. Отвечаем в чат отправки (если это Telegram)
+      // 1. Отвечаем родителю/в чат отправки
       if (chatId) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
@@ -438,14 +462,14 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         });
       }
 
-      // 2. ОТПРАВЛЯЕМ В РАБОЧИЙ ТОПИК ГРУППЫ АДМИНОВ / ПРЕПОДАВАТЕЛЕЙ (ТОЛЬКО ЕСЛИ УКАЗАН ЧАТ И ТОПИК)
+      // 2. Отправляем в рабочий топик админов
       if (targetGroupChatId && targetTopicId) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: targetGroupChatId,
-            message_thread_id: Number(targetTopicId), // 👈 Гарантирует отправку в правильный топик
+            message_thread_id: Number(targetTopicId),
             text: successText,
             parse_mode: 'HTML'
           })
@@ -453,21 +477,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
 
       return NextResponse.json({ ok: true, result }, { headers: corsHeaders });
-    } else {
-      const errorMsg = result?.message || 'Не удалось обработать запрос.';
-      if (chatId) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: threadId } : {}),
-            text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
-            parse_mode: 'HTML'
-          })
-        });
-      }
-      return NextResponse.json({ ok: false, error: errorMsg }, { headers: corsHeaders });
     }
   }
   
