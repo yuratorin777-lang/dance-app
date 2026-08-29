@@ -335,7 +335,7 @@ const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'P
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
-  let threadId = msg?.message_thread_id || null;
+  let threadId = msg?.message_thread_id || update.thread_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
   let isMedical = update.action === 'APPLY_FREEZE';
@@ -349,9 +349,12 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    // Расширенная проверка на медицинский документ
-    const isMedicalTopic = process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID);
-    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'врач', 'illness', 'doctor'].some(
+    // 💡 Надежное сравнение threadId (и как строки, и как числа)
+    const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
+    const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
+
+    // Расширенный список ключевых слов справок
+    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз'].some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
@@ -389,11 +392,12 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          // Если тип явно не определён, сначала пробуем распознать как справку
+          // Если тип явно не определён (нет ключевых слов в подписи), сначала тестируем как справку
           const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date)) {
+          
+          if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date || medicalCheck.childName || medicalCheck.child_name)) {
             ocrData = medicalCheck;
-            isMedical = true;
+            isMedical = true; // 💡 Фиксируем, что это справка!
           } else {
             ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
           }
@@ -420,25 +424,32 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
   // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
   if (googleScriptUrl) {
+    // Собираем точный searchQuery из подписи или из того, что извлек Gemini
+    const searchQuery = caption || ocrData?.childName || ocrData?.child_name || '';
+
     const payload: Record<string, any> = isMedical 
       ? {
           action: 'APPLY_FREEZE',
           ...(studentId ? { studentId } : {}),
-          searchQuery: caption,
+          searchQuery: searchQuery,
+          child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
           fileUrl: fileUrl,
           startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
           endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
-          reason: ocrData?.reason || caption || 'Справка из Telegram',
+          start_date: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
+          end_date: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
+          reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка из Telegram',
           source: msg ? 'TELEGRAM' : 'LK',
           telegram_id: chatId,
           chat_id: chatId,
           thread_id: threadId,
+          topic_id: threadId,
           message_id: msg?.message_id || null
         }
       : {
           action: 'PROCESS_RECEIPT',
           ...(studentId ? { studentId } : {}),
-          searchQuery: caption,
+          searchQuery: searchQuery,
           fileUrl: fileUrl,
           amount: ocrData?.amount || update.amount || null,
           date: ocrData?.date || update.date || null,
@@ -446,6 +457,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           telegram_id: chatId,
           chat_id: chatId,
           thread_id: threadId,
+          topic_id: threadId,
           message_id: msg?.message_id || null
         };
 
@@ -453,7 +465,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     // 🛑 1. Если ошибка поиска ученика
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
-      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите ID ученика в подписи к фото.';
+      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите ID ученика или ФИО в подписи к фото.';
       
       if (chatId && msg) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -461,7 +473,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
-            ...(threadId ? { message_thread_id: threadId } : {}),
+            ...(threadId ? { message_thread_id: Number(threadId) } : {}),
             ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
             text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
             parse_mode: 'HTML'
