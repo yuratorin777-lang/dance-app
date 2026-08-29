@@ -349,11 +349,13 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    isMedical = lowerCaption.includes('справка') || 
-                lowerCaption.includes('больничный') || 
-                lowerFileName.includes('справка') || 
-                lowerFileName.includes('больничный') ||
-                (process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID));
+    // Расширенная проверка на медицинский документ
+    const isMedicalTopic = process.env.TELEGRAM_MEDICAL_TOPIC_ID && threadId === Number(process.env.TELEGRAM_MEDICAL_TOPIC_ID);
+    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'врач', 'illness', 'doctor'].some(
+      kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
+    );
+
+    isMedical = isMedicalTopic || hasMedicalKeywords;
 
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
@@ -387,8 +389,9 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
+          // Если тип явно не определён, сначала пробуем распознать как справку
           const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          if (medicalCheck && medicalCheck.is_valid) {
+          if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date)) {
             ocrData = medicalCheck;
             isMedical = true;
           } else {
@@ -417,7 +420,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
   // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
   if (googleScriptUrl) {
-    // ВАЖНО: Если studentId не найден регуляркой, НЕ отправляем null, чтобы Apps Script искал ученика по Имени/ИД из caption или чата!
     const payload: Record<string, any> = isMedical 
       ? {
           action: 'APPLY_FREEZE',
@@ -469,10 +471,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // 🟢 2. Если успех
+    // 🟢 2. Если успех (отправка карточки в админ-чат только для ЛК)
     if (result && (result.status === 'success' || result.ok)) {
-      // ТОЛЬКО ЕСЛИ ЗАПРОС ИЗ ЛК — Next.js отправляет карточку в админский чат TG.
-      // Если запрос из Telegram — Google Apps Script ответит в чат САМ (чтобы не дублировать).
       if (!msg && botToken) {
         const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
         const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
