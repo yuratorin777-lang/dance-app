@@ -149,33 +149,14 @@ async function generateUpcomingDays(
 }
 
 // ============================================================================
-// 🌐 CORS ОБРАБОТКА (ДЛЯ Cross-Origin ЗАПРОСОВ ИЗ ЛК)
+// 🌐 CORS ОБРАБОТКА (ДЛЯ Cross-Origin ЗАПРОСОВ ИЗ ЛК / PWA)
 // ============================================================================
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    },
-  });
-}
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// Заголовки CORS для корректных запросов из PWA / Личного кабинета
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-// 🟢 Обработчик preflight-запросов CORS
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
