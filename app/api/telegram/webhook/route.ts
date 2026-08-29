@@ -428,52 +428,39 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     // 🟢 ЕСЛИ ВСЁ УСПЕШНО И УЧЕНИК НАЙДЕН
     if (result && (result.status === 'success' || result.ok)) {
-      const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
-      
-      // Страховка: если имя так и не пришло, не пишем "ученика"
-      const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
       const isFromLK = !msg;
 
-      const successText = isMedical 
-        ? `🏥 <b>Справка успешно принята ${isFromLK ? 'из ЛК' : ''}!</b>\n` +
-          `👤 Ученик: ${displayName}\n` +
-          `📅 Период: <b>${result.startDate || payload.startDate || 'по справке'}</b> по <b>${result.endDate || payload.endDate || '—'}</b>\n` +
-          `❄️ Дней продления: <b>${result.days_frozen || result.days || '—'}</b>`
-        : `💳 <b>Оплата принята ${isFromLK ? 'из ЛК' : ''}!</b>\n` +
-          `👤 Ученик: ${displayName}\n` +
-          `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
+      // 💡 Если запрос пришел из ЛК — Next.js сам уведомит админов/пользователя.
+      // 💡 Если запрос из Telegram-чата — Google Apps Script УЖЕ отправил сообщение, Next.js ничего не дублирует!
+      if (isFromLK) {
+        const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
+        const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
 
-      const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
-      const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
-      const targetTopicId = result.topic_medical_id || result.medical_topic_id || result.topic_payments_id || result.payment_topic_id || envTopicId;
+        const successText = isMedical 
+          ? `🏥 <b>Справка успешно принята из ЛК!</b>\n` +
+            `👤 Ученик: ${displayName}\n` +
+            `📅 Период: <b>${result.startDate || payload.startDate || 'по справке'}</b> по <b>${result.endDate || payload.endDate || '—'}</b>\n` +
+            `❄️ Дней продления: <b>${result.days_frozen || result.days || '—'}</b>`
+          : `💳 <b>Оплата принята из ЛК!</b>\n` +
+            `👤 Ученик: ${displayName}\n` +
+            `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
 
-      // 1. Отвечаем родителю/в чат отправки
-      if (chatId) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: threadId } : {}),
-            ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
-            text: successText,
-            parse_mode: 'HTML'
-          })
-        });
-      }
+        const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
+        const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
+        const targetTopicId = result.topic_medical_id || result.medical_topic_id || result.topic_payments_id || result.payment_topic_id || envTopicId;
 
-      // 2. Отправляем в рабочий топик админов
-      if (targetGroupChatId && targetTopicId) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: targetGroupChatId,
-            message_thread_id: Number(targetTopicId),
-            text: successText,
-            parse_mode: 'HTML'
-          })
-        }).catch(e => console.error('Error sending message to group topic:', e));
+        if (targetGroupChatId) {
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: targetGroupChatId,
+              ...(targetTopicId ? { message_thread_id: Number(targetTopicId) } : {}),
+              text: successText,
+              parse_mode: 'HTML'
+            })
+          }).catch(e => console.error('Error sending message to group topic from LK:', e));
+        }
       }
 
       return NextResponse.json({ ok: true, result }, { headers: corsHeaders });
