@@ -251,12 +251,6 @@ export async function POST(req: NextRequest) {
     }
 
     // ------------------------------------------------------------------------
-    // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК
-    // (Сюда теперь ровно и без перехватов приходят все варианты REQUEST_FREEZE_FROM_LK / request_freeze)
-    // ------------------------------------------------------------------------
-    // [Вставляем обновленный блок 2.1.1 из предыдущего ответа]
-
-   // ------------------------------------------------------------------------
 // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК
 // ------------------------------------------------------------------------
 
@@ -264,7 +258,6 @@ export async function POST(req: NextRequest) {
 if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze') {
   if (googleScriptUrl) {
     try {
-      // 1. Передаем данные в Apps Script
       const result = await callAppsScript(googleScriptUrl, {
         action: 'APPLY_FREEZE',
         leadId: update.leadId || update.studentId,
@@ -279,7 +272,6 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
       const adminGroupId = process.env.TELEGRAM_ADMIN_GROUP_ID;
       const freezeTopicId = process.env.TELEGRAM_FREEZE_TOPIC_ID;
 
-      // 2. Отправляем уведомление с кнопками В АДМИНСКИЙ ЧАТ
       if (adminGroupId && botToken) {
         const adminMsg = `❄️ <b>Запрос на заморозку из ЛК</b>\n\n` +
           `👤 <b>Ученик/Лид:</b> ${update.studentName || update.leadId || 'Не указан'}\n` +
@@ -307,13 +299,13 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
         }).catch(err => console.error('Error sending freeze alert to admin group:', err));
       }
 
-      return NextResponse.json({ ok: true, result });
+      return NextResponse.json({ ok: true, result }, { headers: corsHeaders });
     } catch (err) {
       console.error('Error forwarding freeze request to Apps Script:', err);
-      return NextResponse.json({ ok: false, error: 'Apps Script error' }, { status: 500 });
+      return NextResponse.json({ ok: false, error: 'Apps Script error' }, { status: 500, headers: corsHeaders });
     }
   }
-  return NextResponse.json({ ok: false, error: 'No Script URL' }, { status: 500 });
+  return NextResponse.json({ ok: false, error: 'No Script URL' }, { status: 500, headers: corsHeaders });
 }
 
 // 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API)
@@ -366,7 +358,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     const mimeType = msg.document?.mime_type || 'image/jpeg';
 
-    // Сканирование через Gemini OCR
     if (imageBase64) {
       try {
         if (isMedical) {
@@ -397,7 +388,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
           endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
           reason: ocrData?.reason || caption || 'Справка из Telegram',
-          source: msg ? 'TELEGRAM' : 'LK'
+          source: msg ? 'TELEGRAM' : 'LK',
+          telegram_id: chatId // 👈 ПЕРЕДАЕМ TELEGRAM ID, ЧТОБЫ ТАБЛИЦА НАХОДИЛА УЧЕНИКА
         }
       : {
           action: 'PROCESS_RECEIPT',
@@ -406,7 +398,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           fileUrl: fileUrl,
           amount: ocrData?.amount || update.amount || null,
           date: ocrData?.date || update.date || null,
-          source: msg ? 'TELEGRAM' : 'LK'
+          source: msg ? 'TELEGRAM' : 'LK',
+          telegram_id: chatId // 👈 ПЕРЕДАЕМ TELEGRAM ID, ЧТОБЫ ТАБЛИЦА НАХОДИЛА УЧЕНИКА
         };
 
     const result = await callAppsScript(googleScriptUrl, payload);
@@ -424,10 +417,11 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           `👤 Ученик: <b>${studentName}</b>\n` +
           `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
 
-      const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id;
-      const targetTopicId = isMedical 
-        ? (result.topic_medical_id || result.medical_topic_id) 
-        : (result.topic_payments_id || result.payment_topic_id);
+      const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
+      
+      // Четко определяем топик: если указан в отчете — берем его, иначе берем из ENV
+      const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
+      const targetTopicId = result.topic_medical_id || result.medical_topic_id || result.topic_payments_id || result.payment_topic_id || envTopicId;
 
       // 1. Отвечаем в чат отправки (если это Telegram)
       if (chatId) {
@@ -444,21 +438,21 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         });
       }
 
-      // 2. ОТПРАВЛЯЕМ В РАБОЧИЙ ТОПИК ГРУППЫ АДМИНОВ / ПРЕПОДАВАТЕЛЕЙ
-      if (targetGroupChatId) {
+      // 2. ОТПРАВЛЯЕМ В РАБОЧИЙ ТОПИК ГРУППЫ АДМИНОВ / ПРЕПОДАВАТЕЛЕЙ (ТОЛЬКО ЕСЛИ УКАЗАН ЧАТ И ТОПИК)
+      if (targetGroupChatId && targetTopicId) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: targetGroupChatId,
-            ...(targetTopicId ? { message_thread_id: Number(targetTopicId) } : {}),
+            message_thread_id: Number(targetTopicId), // 👈 Гарантирует отправку в правильный топик
             text: successText,
             parse_mode: 'HTML'
           })
         }).catch(e => console.error('Error sending message to group topic:', e));
       }
 
-      return NextResponse.json({ ok: true, result });
+      return NextResponse.json({ ok: true, result }, { headers: corsHeaders });
     } else {
       const errorMsg = result?.message || 'Не удалось обработать запрос.';
       if (chatId) {
@@ -467,14 +461,18 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: chatId,
+            ...(threadId ? { message_thread_id: threadId } : {}),
             text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
             parse_mode: 'HTML'
           })
         });
       }
-      return NextResponse.json({ ok: false, error: errorMsg });
+      return NextResponse.json({ ok: false, error: errorMsg }, { headers: corsHeaders });
     }
   }
+  
+  // ⛔ КРИТИЧЕСКИЙ FIX: Прерываем обработку файла, чтобы код не шел дальше ниже по файлу
+  return NextResponse.json({ ok: true }, { headers: corsHeaders });
 }
 
     // ------------------------------------------------------------------------
