@@ -524,32 +524,48 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 // 📌 SECTION: ОБРАБОТКА КНОПОК ЗАМОРОЗКИ (ОДОБРИТЬ / ОТКЛОНИТЬ ИЗ ТЕЛЕГРАМ)
 if (callbackData.startsWith('freeze_approve:') || callbackData.startsWith('freeze_reject:')) {
   const isApprove = callbackData.startsWith('freeze_approve:');
-  const payloadId = callbackData.split(':')[1];
+  const freezeId = callbackData.split(':')[1];
   const statusText = isApprove ? 'Заморожен' : 'Активен';
   const originalText = message.text || '';
 
-  // Парсим телефон из текста сообщения (ищет строку "Телефон: ...")
-  const phoneMatch = originalText.match(/(?:Телефон|Ученик\/Лид):\s*([^\n]+)/i);
-  const extractedPhone = phoneMatch ? phoneMatch[1].trim() : payloadId;
+  // 1. Извлекаем Телефон (ищет "Телефон: ...")
+  const phoneMatch = originalText.match(/Телефон:\s*([^\n]+)/i);
+  const extractedPhone = phoneMatch ? phoneMatch[1].trim() : '';
 
-  // Парсим даты из текста сообщения (ищет "с XX.XX.XXXX по YY.YY.YYYY")
+  // 2. Извлекаем Имя ученика (ищет "Ученик:" или "Ученик/Лид:")
+  const nameMatch = originalText.match(/(?:Ученик|Ученик\/Лид):\s*([^\n]+)/i);
+  const extractedName = nameMatch ? nameMatch[1].trim() : '';
+
+  // 3. Извлекаем даты (ищет "Период: с XX по YY")
   const dateMatch = originalText.match(/Период:\s*с\s*([^\s]+)\s*по\s*([^\n\s]+)/i);
   const startDate = isApprove && dateMatch ? dateMatch[1] : '';
   const endDate = isApprove && dateMatch ? dateMatch[2] : '';
 
-  // 1. Отправляем полный запрос в Google Apps Script (Колонки K, L, M)
+  // Передаем то, по чему 100% найдется ученик: телефон или имя
+  const targetSearch = extractedPhone || extractedName || freezeId;
+
+  console.log(' Telegram Freeze Callback Data:', {
+    targetSearch,
+    extractedPhone,
+    extractedName,
+    startDate,
+    endDate,
+    statusText
+  });
+
+  // 4. Отправляем запрос в Google Apps Script
   if (googleScriptUrl) {
-    await callAppsScript(googleScriptUrl, {
+    const res = await callAppsScript(googleScriptUrl, {
       action: 'update_freeze_status',
-      phone: extractedPhone,
-      studentId: payloadId,
+      phone: targetSearch,
       status: statusText,
-      startDate: startDate, // 👈 Дата в колонку L
-      endDate: endDate     // 👈 Дата в колонку M
+      startDate: startDate,
+      endDate: endDate
     });
+    console.log(' GAS Update Status Result:', res);
   }
 
-  // 2. Меняем текст сообщения в топике, фиксируя решение
+  // 5. Обновляем плашку сообщения в Telegram
   const updatedStatusHeader = isApprove
     ? `✅ <b>ЗАМОРОЗКА ОДОБРЕНА</b>\n\n`
     : `❌ <b>ЗАМОРОЗКА ОТКЛОНЕНА</b>\n\n`;
@@ -563,16 +579,6 @@ if (callbackData.startsWith('freeze_approve:') || callbackData.startsWith('freez
       text: updatedStatusHeader + originalText,
       parse_mode: 'HTML',
       reply_markup: { inline_keyboard: [] }
-    })
-  });
-
-  // 3. Закрываем всплывающее уведомление в Telegram
-  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      callback_query_id: callbackQuery.id,
-      text: isApprove ? 'Заморозка одобрена!' : 'Заморозка отклонена!'
     })
   });
 
