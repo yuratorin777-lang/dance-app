@@ -17,7 +17,6 @@ const medicalSchema: Schema = {
 };
 
 export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
-  // Универсальная очистка base64 от любого MIME-префикса
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
   const response = await ai.models.generateContent({
@@ -33,15 +32,12 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
         text: `Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).
 
 КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ДЛЯ ИМЕНИ РЕБЕНКА (child_name):
-В справках имя почти всегда написано в ДАТЕЛЬНОМ или РОДИТЕЛЬНОМ падеже (например: "Миляевой Дарине", "Иванову Пётру", "Сидоровой Марии").
-Ты ОБЯЗАН автоматически переводить ФИО ребенка в ИМЕНИТЕЛЬНЫЙ ПАДЕЖ (Кто? Что?)!
+Переводи ФИО ребенка в ИМЕНИТЕЛЬНЫЙ ПАДЕЖ!
 Примеры:
 - "Миляевой Дарине" -> "Миляева Дарина"
-- "Миляевой Дарины" -> "Миляева Дарина"
 - "Иванову Петру" -> "Иванов Петр"
-- "Сидоровой Марии" -> "Сидорова Мария"
 
-Дополнительно тебе дана подпись к справке от пользователя: "${caption}".
+Дополнительно тебе дана подпись: "${caption}".
 Если из документа сложно понять ФИО, используй имя из подписи.
 Формат ответа — строго по JSON schema.`,
       },
@@ -54,11 +50,24 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 
   const parsed = JSON.parse(response.text || '{}');
 
-  // Нормализация ключей для совместимости с разными сервисами
+  const startDate = parsed.start_date || parsed.startDate || null;
+  const endDate = parsed.end_date || parsed.endDate || null;
+
+  // Вычисляем количество дней прямо тут для гарантии
+  let days = 0;
+  if (startDate && endDate) {
+    const s = new Date(startDate);
+    const e = new Date(endDate);
+    if (!isNaN(s.getTime()) && !isNaN(e.getTime())) {
+      days = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    }
+  }
+
   return {
     ...parsed,
-    startDate: parsed.start_date || parsed.startDate || null,
-    endDate: parsed.end_date || parsed.endDate || null,
+    startDate,
+    endDate,
+    days: days > 0 ? days : 1,
     childName: parsed.child_name || parsed.childName || null,
     reason: parsed.diagnosis || parsed.reason || 'Заболевание'
   };
@@ -78,14 +87,6 @@ export async function POST(req: Request) {
 
     const extractedData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
 
-    if (!extractedData.is_valid) {
-      return NextResponse.json({
-        success: false,
-        message: 'Загруженный документ не распознан как медицинская справка',
-        data: extractedData,
-      });
-    }
-
     let gasResult: any = null;
     const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
@@ -94,14 +95,14 @@ export async function POST(req: Request) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'APPLY_FREEZE',
+          action: 'APPLY_FREEZE', // 🟢 СТРОГО APPLY_FREEZE
           studentId: studentId || null,
-          searchQuery: extractedData.childName || extractedData.child_name || caption || '',
+          searchQuery: extractedData.childName || caption || '',
+          childName: extractedData.childName,
           startDate: extractedData.startDate,
           endDate: extractedData.endDate,
-          start_date: extractedData.startDate,
-          end_date: extractedData.endDate,
-          reason: extractedData.reason || extractedData.diagnosis || 'Справка',
+          days: extractedData.days,
+          reason: extractedData.reason || 'Справка',
           source: 'DIRECT_API'
         }),
       });
@@ -109,30 +110,9 @@ export async function POST(req: Request) {
       gasResult = await gasResponse.json();
     }
 
-    const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    if (gasResult && gasResult.chat_id && gasResult.topic_medical_id && botToken) {
-      const tgText = 
-        `🏥 <b>МЕДИЦИНСКАЯ СПРАВКА / ЗАМОРОЗКА</b>\n\n` +
-        `👤 <b>Ученик:</b> ${gasResult.student_name || extractedData.childName || 'Не указан'}\n` +
-        `📅 <b>Период:</b> с ${extractedData.startDate} по ${extractedData.endDate}\n` +
-        `❄️ <b>Дней заморозки:</b> ${gasResult.days_frozen || '—'}\n` +
-        `📝 <b>Диагноз/Причина:</b> ${extractedData.reason || 'Не указан'}`;
-
-      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: gasResult.chat_id,
-          message_thread_id: Number(gasResult.topic_medical_id),
-          text: tgText,
-          parse_mode: 'HTML',
-        }),
-      });
-    }
-
     return NextResponse.json({
-      success: true,
-      message: 'Справка принята, период заморозки зафиксирован',
+      success: gasResult?.status === 'success',
+      message: gasResult?.status === 'success' ? 'Справка принята' : (gasResult?.message || 'Ошибка сохранения'),
       ocr: extractedData,
       gasResponse: gasResult,
     });
