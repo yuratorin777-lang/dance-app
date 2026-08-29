@@ -20,7 +20,7 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.5-flash-lite',
     contents: [
       {
         inlineData: {
