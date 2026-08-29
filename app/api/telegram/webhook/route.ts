@@ -338,138 +338,144 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
+  // 🛡️ Защита 1: Если action уже содержит freeze/medical — сразу считаем медицинским документом
+  let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
   let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // 1. ОПРЕДЕЛЕНИЕ ТИПА ДОКУМЕНТА (СПРАВКА ИЛИ ЧЕК)
-  let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
-
+  // --- 2.1 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
   if (msg) {
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    // Сверяем топик справок
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
-    const isMedicalTopic = !!envMedicalTopicId && (String(threadId).trim() === String(envMedicalTopicId).trim());
+    const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
-    // Расширенный поиск ключевых слов
-    const medicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница', 'справку', 'болеем'];
-    const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
+    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница'].some(
+      kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
+    );
 
-    // PDF документы почти всегда являются справками
-    const isPdf = msg.document?.mime_type === 'application/pdf' || lowerFileName.endsWith('.pdf');
-
-    if (isMedicalTopic || hasMedicalKeywords || isPdf) {
+    if (isMedicalTopic || hasMedicalKeywords) {
       isMedical = true;
     }
-  }
 
-  const fileId = msg?.photo 
-    ? msg.photo[msg.photo.length - 1].file_id 
-    : msg?.document?.file_id;
+    const fileId = msg.photo 
+      ? msg.photo[msg.photo.length - 1].file_id 
+      : msg.document?.file_id;
 
-  let imageBase64: string | null = null;
+    let imageBase64: string | null = null;
 
-  if (fileId && botToken) {
-    try {
-      const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-      const fileData = await fileRes.json();
-      if (fileData.ok && fileData.result?.file_path) {
-        fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-        imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+    if (fileId && botToken) {
+      try {
+        const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+        const fileData = await fileRes.json();
+        if (fileData.ok && fileData.result?.file_path) {
+          fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+          imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+        }
+      } catch (e) {
+        console.error('Error fetching Telegram file URL:', e);
       }
-    } catch (e) {
-      console.error('Error fetching Telegram file URL:', e);
     }
-  }
 
-  // Извлечение ID ученика из подписи (STD-123, ST-123 или LD-123)
-  const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
-  if (studentIdMatch) {
-    studentId = studentIdMatch[0].toUpperCase();
-  }
+    const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
+    if (studentIdMatch) {
+      studentId = studentIdMatch[0].toUpperCase();
+    }
 
-  const mimeType = msg?.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+    const mimeType = msg.document?.mime_type || 'image/jpeg';
 
-  // 2. OCR ОБРАБОТКА
-  if (imageBase64) {
-    try {
-      if (isMedical) {
-        ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-      } else {
-        // Сначала пробуем распознать чек
-        const receiptCheck = await analyzeReceipt(imageBase64, mimeType, caption);
-        
-        // Если OCR вернул сумму или реквизиты — это однозначно чек
-        if (receiptCheck && (receiptCheck.amount || receiptCheck.date)) {
-          ocrData = receiptCheck;
-          isMedical = false;
+    if (imageBase64) {
+      try {
+        if (isMedical) {
+          ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          // Если чек не распознался, проверяем не справка ли это
+          // 🛡️ Защита 2: Сначала проверяем на справку
           const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          if (medicalCheck && (medicalCheck.startDate || medicalCheck.childName || medicalCheck.child_name)) {
+          
+          // Строгая проверка полей
+          const hasValidMedicalData = medicalCheck && (
+            medicalCheck.is_valid === true || 
+            (medicalCheck.startDate && medicalCheck.startDate !== 'null') || 
+            (medicalCheck.start_date && medicalCheck.start_date !== 'null') ||
+            (medicalCheck.childName && medicalCheck.childName !== 'null') ||
+            (medicalCheck.child_name && medicalCheck.child_name !== 'null')
+          );
+
+          if (hasValidMedicalData) {
             ocrData = medicalCheck;
-            isMedical = true; // Переключаем на справку
+            isMedical = true; // 🎯 Зажимаем флаг Справки!
           } else {
-            ocrData = receiptCheck; // Фоллбэк на чек
+            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
           }
         }
+      } catch (err) {
+        console.error('Gemini OCR process error:', err);
+      }
+    }
+  } 
+  // --- 2.2 ДЛЯ DIRECT API (ИЗ ЛК) ---
+  else if (isDirectApiCall && fileUrl) {
+    try {
+      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+      if (imageBase64) {
+        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+        ocrData = isMedical 
+          ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
+          : await analyzeReceipt(imageBase64, mimeType, caption);
       }
     } catch (err) {
-      console.error('Gemini OCR process error:', err);
+      console.error('Gemini OCR error for direct LK API call:', err);
     }
   }
 
-  // 3. ОТПРАВКА В GOOGLE APPS SCRIPT
+  // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
   if (googleScriptUrl) {
-    const targetAction = isMedical ? 'APPLY_FREEZE' : 'PROCESS_RECEIPT';
+    const searchQuery = caption || ocrData?.childName || ocrData?.child_name || '';
 
-    // ВАЖНО: Определяем чистое имя/запрос для поиска ученика
-    let searchQuery = studentId || update.studentId || '';
-    
-    if (!searchQuery) {
-      if (isMedical) {
-        searchQuery = ocrData?.childName || ocrData?.child_name || caption;
-      } else {
-        // Для чека НЕ передаем текст подписи "Оплата за сентябрь" в качестве имени ученика!
-        searchQuery = ocrData?.payerName || ocrData?.studentName || ocrData?.childName || caption;
-      }
-    }
+    // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD
+    const payload: Record<string, any> = isMedical 
+      ? {
+          action: 'APPLY_FREEZE',
+          ...(studentId ? { studentId } : {}),
+          searchQuery: searchQuery,
+          child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
+          fileUrl: fileUrl,
+          startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
+          endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
+          days: ocrData?.days || null,
+          reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка',
+          source: msg ? 'TELEGRAM' : 'LK',
+          telegram_id: chatId,
+          chat_id: chatId,
+          thread_id: threadId,
+          topic_id: threadId,
+          message_id: msg?.message_id || null
+        }
+      : {
+          action: 'PROCESS_RECEIPT',
+          ...(studentId ? { studentId } : {}),
+          searchQuery: searchQuery,
+          fileUrl: fileUrl,
+          amount: ocrData?.amount || update.amount || null,
+          date: ocrData?.date || update.date || null,
+          source: msg ? 'TELEGRAM' : 'LK',
+          telegram_id: chatId,
+          chat_id: chatId,
+          thread_id: threadId,
+          topic_id: threadId,
+          message_id: msg?.message_id || null
+        };
 
-    const payload: Record<string, any> = {
-      action: targetAction,
-      ...(studentId ? { studentId } : {}),
-      searchQuery: searchQuery,
-      fileUrl: fileUrl,
-      source: msg ? 'TELEGRAM' : 'LK',
-      telegram_id: chatId,
-      chat_id: chatId,
-      thread_id: threadId,
-      topic_id: threadId,
-      message_id: msg?.message_id || null
-    };
-
-    if (isMedical) {
-      payload.child_name = ocrData?.childName || ocrData?.child_name || searchQuery;
-      payload.startDate = ocrData?.startDate || ocrData?.start_date || update.startDate || null;
-      payload.endDate = ocrData?.endDate || ocrData?.end_date || update.endDate || null;
-      payload.reason = ocrData?.reason || ocrData?.diagnosis || caption || 'Справка';
-      payload.days = ocrData?.days || null;
-    } else {
-      payload.amount = ocrData?.amount || update.amount || null;
-      payload.date = ocrData?.date || update.date || null;
-      payload.payerName = ocrData?.payerName || null;
-    }
-
-    console.log(`[PAYLOAD OUT] Action: ${targetAction} | Query: ${searchQuery}`);
+    console.log('Sending payload to GAS:', JSON.stringify(payload));
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
-    // Ошибка поиска в базе
+    // 🛑 Ошибка поиска в базе
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
-      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе.';
+      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите имя ученика в подписи.';
       
       if (chatId && msg) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -479,7 +485,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
             chat_id: chatId,
             ...(threadId ? { message_thread_id: Number(threadId) } : {}),
             ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
-            text: `⚠️ <b>Ошибка обработки (${isMedical ? 'Справка' : 'Чек'}):</b> ${errorMsg}`,
+            text: `⚠️ <b>Ошибка:</b> ${errorMsg}`,
             parse_mode: 'HTML'
           })
         });
@@ -487,18 +493,18 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // Успешный ответ
+    // 🟢 Успешная обработка
     if (result && (result.status === 'success' || result.ok)) {
       if (!msg && botToken) {
-        const studentName = result.student_name || result.studentName || result.student_id || payload.studentId;
+        const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
         const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
 
         const successText = isMedical 
-          ? `🏥 <b>Справка успешно обработана!</b>\n` +
+          ? `🏥 <b>Справка успешно обработана из ЛК!</b>\n` +
             `👤 Ученик: ${displayName}\n` +
             `📅 Период: <b>${result.startDate || payload.startDate || 'по справке'}</b> по <b>${result.endDate || payload.endDate || '—'}</b>\n` +
             `❄️ Дней продления: <b>${result.days_frozen || result.days || '—'}</b>`
-          : `💳 <b>Оплата принята!</b>\n` +
+          : `💳 <b>Оплата принята из ЛК!</b>\n` +
             `👤 Ученик: ${displayName}\n` +
             `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
 
