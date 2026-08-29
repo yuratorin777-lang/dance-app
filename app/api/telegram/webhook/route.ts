@@ -250,21 +250,42 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ------------------------------------------------------------------------
-// SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК
+  // ------------------------------------------------------------------------
+// SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК / TELEGRAM
 // ------------------------------------------------------------------------
 
 // 🟢 1. ИЗОЛИРОВАННАЯ ОБРАБОТКА ЗАМОРОЗКИ ИЗ ЛК (С КНОПКАМИ В АДМИН-ЧАТ)
 if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze') {
   if (googleScriptUrl) {
     try {
+      let ocrData: any = null;
+      const docUrl = update.fileUrl || update.docUrl || '';
+
+      if (docUrl) {
+        try {
+          const imageBase64 = await downloadTelegramFileAsBase64(docUrl);
+          if (imageBase64) {
+            const mimeType = docUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+            ocrData = await analyzeMedicalDoc(imageBase64, mimeType, update.reason || '');
+          }
+        } catch (ocrErr) {
+          console.error('Ошибка OCR для файла из ЛК (заморозка):', ocrErr);
+        }
+      }
+
+      const startDate = ocrData?.startDate || ocrData?.start_date || update.startDate || null;
+      const endDate = ocrData?.endDate || ocrData?.end_date || update.endDate || null;
+      const reason = ocrData?.reason || update.reason || 'Запрос заморозки из ЛК';
+
       const result = await callAppsScript(googleScriptUrl, {
         action: 'APPLY_FREEZE',
         leadId: update.leadId || update.studentId,
-        startDate: update.startDate,
-        endDate: update.endDate,
-        reason: update.reason || 'Запрос заморозки из ЛК',
-        docUrl: update.fileUrl || update.docUrl || '',
+        studentId: update.studentId || update.leadId,
+        startDate: startDate,
+        endDate: endDate,
+        reason: reason,
+        docUrl: docUrl,
+        fileUrl: docUrl,
         source: 'LK'
       });
 
@@ -275,9 +296,9 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
       if (adminGroupId && botToken) {
         const adminMsg = `❄️ <b>Запрос на заморозку из ЛК</b>\n\n` +
           `👤 <b>Ученик/Лид:</b> ${update.studentName || update.leadId || 'Не указан'}\n` +
-          `📅 <b>Период:</b> с ${update.startDate || '—'} по ${update.endDate || '—'}\n` +
-          `📝 <b>Причина:</b> ${update.reason || 'Справка/Заявление'}\n` +
-          `${update.fileUrl ? `📄 <a href="${update.fileUrl}">Открыть документ</a>` : ''}`;
+          `📅 <b>Период:</b> с ${startDate || '—'} по ${endDate || '—'}\n` +
+          `📝 <b>Причина:</b> ${reason}\n` +
+          `${docUrl ? `📄 <a href="${docUrl}">Открыть документ</a>` : ''}`;
 
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
@@ -299,7 +320,7 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
         }).catch(err => console.error('Error sending freeze alert to admin group:', err));
       }
 
-      return NextResponse.json({ ok: true, result }, { headers: corsHeaders });
+      return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
     } catch (err) {
       console.error('Error forwarding freeze request to Apps Script:', err);
       return NextResponse.json({ ok: false, error: 'Apps Script error' }, { status: 500, headers: corsHeaders });
@@ -308,12 +329,12 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
   return NextResponse.json({ ok: false, error: 'No Script URL' }, { status: 500, headers: corsHeaders });
 }
 
-// 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ ИЗ ТЕЛЕГРАМ ИЛИ DIRECT API
+// 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API ИЗ ЛК)
 const msg = update.message || update.edited_message;
 const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT';
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
-  let chatId = msg?.chat?.id || null;
+  let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
   let threadId = msg?.message_thread_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
@@ -322,13 +343,12 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // 1️⃣ ОБРАБОТКА НАПРЯМУЮ ИЗ ТЕЛЕГРАМ-ЧАТА
+  // --- 2.1 ИСХОДНАЯ РАБОЧАЯ ЛОГИКА ДЛЯ ТЕЛЕГРАМ ---
   if (msg) {
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    // Определяем, справка это или чек
     isMedical = lowerCaption.includes('справка') || 
                 lowerCaption.includes('больничный') || 
                 lowerFileName.includes('справка') || 
@@ -341,7 +361,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     let imageBase64: string | null = null;
 
-    // Скачиваем файл из Telegram
     if (fileId && botToken) {
       try {
         const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
@@ -355,13 +374,14 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
 
-    // Поиск ID ученика в подписи (STD-123)
+    // Извлечение ID ученика из подписи
     const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
-    studentId = studentIdMatch ? studentIdMatch[0].toUpperCase() : null;
+    if (studentIdMatch) {
+      studentId = studentIdMatch[0].toUpperCase();
+    }
 
     const mimeType = msg.document?.mime_type || 'image/jpeg';
 
-    // Запуск Gemini OCR для анализа документа из TG
     if (imageBase64) {
       try {
         if (isMedical) {
@@ -380,7 +400,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
   } 
-  // 2️⃣ ОБРАБОТКА ДЛЯ DIRECT API (ИЗ ЛК)
+  // --- 2.2 ДЛЯ DIRECT API (ИЗ ЛК) ---
   else if (isDirectApiCall && fileUrl) {
     try {
       const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
@@ -395,12 +415,13 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     }
   }
 
-  // 3️⃣ ОТПРАВКА ДАННЫХ В GOOGLE APPS SCRIPT
+  // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
   if (googleScriptUrl) {
-    let payload: Record<string, any> = isMedical 
+    // ВАЖНО: Если studentId не найден регуляркой, НЕ отправляем null, чтобы Apps Script искал ученика по Имени/ИД из caption или чата!
+    const payload: Record<string, any> = isMedical 
       ? {
           action: 'APPLY_FREEZE',
-          studentId: studentId,
+          ...(studentId ? { studentId } : {}),
           searchQuery: caption,
           fileUrl: fileUrl,
           startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
@@ -408,27 +429,31 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           reason: ocrData?.reason || caption || 'Справка из Telegram',
           source: msg ? 'TELEGRAM' : 'LK',
           telegram_id: chatId,
-          chat_id: chatId
+          chat_id: chatId,
+          thread_id: threadId,
+          message_id: msg?.message_id || null
         }
       : {
           action: 'PROCESS_RECEIPT',
-          studentId: studentId,
+          ...(studentId ? { studentId } : {}),
           searchQuery: caption,
           fileUrl: fileUrl,
           amount: ocrData?.amount || update.amount || null,
           date: ocrData?.date || update.date || null,
           source: msg ? 'TELEGRAM' : 'LK',
           telegram_id: chatId,
-          chat_id: chatId
+          chat_id: chatId,
+          thread_id: threadId,
+          message_id: msg?.message_id || null
         };
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
-    // Если ошибка поиска ученика — пишем Родителю прямо в Telegram-чат
+    // 🛑 1. Если ошибка поиска ученика
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
-      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Пожалуйста, укажите ID ученика в подписи к фото (например: STD-123).';
+      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите ID ученика в подписи к фото.';
       
-      if (chatId) {
+      if (chatId && msg) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -444,8 +469,10 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // Если успешная отправка из ЛК — отправляем карточку админам (из TG скрипт ответит сам)
+    // 🟢 2. Если успех
     if (result && (result.status === 'success' || result.ok)) {
+      // ТОЛЬКО ЕСЛИ ЗАПРОС ИЗ ЛК — Next.js отправляет карточку в админский чат TG.
+      // Если запрос из Telegram — Google Apps Script ответит в чат САМ (чтобы не дублировать).
       if (!msg && botToken) {
         const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
         const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
@@ -480,7 +507,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
     }
   }
-  
+
   return NextResponse.json({ ok: true }, { headers: corsHeaders });
 }
 
