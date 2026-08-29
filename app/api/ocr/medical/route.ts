@@ -20,7 +20,7 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash-lite',
+    model: 'gemini-3.5-flash-lite', // 🟢 ИСПРАВЛЕНО: Валидное имя модели с 1500 бесплатными запросами/день
     contents: [
       {
         inlineData: {
@@ -29,16 +29,19 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
         },
       },
       {
-        text: `Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).
+        text: `Ты эксперт по распознаванию медицинских справок и рукописного текста.
 
-КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ДЛЯ ИМЕНИ РЕБЕНКА (child_name):
-Переводи ФИО ребенка в ИМЕНИТЕЛЬНЫЙ ПАДЕЖ!
-Примеры:
-- "Миляевой Дарине" -> "Миляева Дарина"
-- "Иванову Петру" -> "Иванов Петр"
+Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).
 
-Дополнительно тебе дана подпись: "${caption}".
-Если из документа сложно понять ФИО, используй имя из подписи.
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА ДЛЯ ИМЕНИ РЕБЕНКА (child_name):
+1. Внимательно всматривайся в буквенные сочетания. Рукописные фамилии вроде "Миляева", "Михеева", "Митяева" легко спутать — сверяй каждую букву.
+2. Переводи ФИО ребенка строго в ИМЕНИТЕЛЬНЫЙ ПАДЕЖ (Фамилия Имя)!
+   Примеры:
+   - "Миляевой Дарине" -> "Миляева Дарина"
+   - "Иванову Петру" -> "Иванов Петр"
+3. Дополнительно тебе дана подпись: "${caption}".
+   Если из документа сложно разобрать ФИО или почерк неразборчив, отдай приоритет имени из подписи к фото.
+
 Формат ответа — строго по JSON schema.`,
       },
     ],
@@ -95,7 +98,7 @@ export async function POST(req: Request) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'APPLY_FREEZE', // 🟢 СТРОГО APPLY_FREEZE
+          action: 'APPLY_FREEZE',
           studentId: studentId || null,
           searchQuery: extractedData.childName || caption || '',
           childName: extractedData.childName,
