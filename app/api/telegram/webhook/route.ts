@@ -433,13 +433,24 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
   // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
   if (googleScriptUrl) {
-    const searchQuery = caption || ocrData?.childName || ocrData?.child_name || '';
+    // 🎯 Расширенный поиск имени: проверяем подпись, а затем ВСЕ возможные поля OCR
+    const searchQuery = (
+      caption || 
+      ocrData?.payerName || 
+      ocrData?.payer_name ||
+      ocrData?.studentName || 
+      ocrData?.student_name ||
+      ocrData?.childName || 
+      ocrData?.child_name || 
+      ''
+    ).trim();
 
     // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD
     const payload: Record<string, any> = isMedical 
       ? {
           action: 'APPLY_FREEZE',
           ...(studentId ? { studentId } : {}),
+          studentName: searchQuery,
           searchQuery: searchQuery,
           child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
           fileUrl: fileUrl,
@@ -457,7 +468,9 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       : {
           action: 'PROCESS_RECEIPT',
           ...(studentId ? { studentId } : {}),
+          studentName: searchQuery,
           searchQuery: searchQuery,
+          rawCaption: caption || '',
           fileUrl: fileUrl,
           amount: ocrData?.amount || update.amount || null,
           date: ocrData?.date || update.date || null,
