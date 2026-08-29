@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const apiKey = process.env.GEMINI_API_KEY;
+const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
 const medicalSchema: Schema = {
   type: Type.OBJECT,
@@ -51,7 +52,16 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
     },
   });
 
-  return JSON.parse(response.text || '{}');
+  const parsed = JSON.parse(response.text || '{}');
+
+  // Нормализация ключей для совместимости с разными сервисами
+  return {
+    ...parsed,
+    startDate: parsed.start_date || parsed.startDate || null,
+    endDate: parsed.end_date || parsed.endDate || null,
+    childName: parsed.child_name || parsed.childName || null,
+    reason: parsed.diagnosis || parsed.reason || 'Заболевание'
+  };
 }
 
 export async function POST(req: Request) {
@@ -86,32 +96,36 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           action: 'APPLY_FREEZE',
           studentId: studentId || null,
-          searchQuery: extractedData.child_name || caption || '',
-          startDate: extractedData.start_date,
-          endDate: extractedData.end_date,
-          reason: extractedData.diagnosis,
+          searchQuery: extractedData.childName || extractedData.child_name || caption || '',
+          startDate: extractedData.startDate,
+          endDate: extractedData.endDate,
+          start_date: extractedData.startDate,
+          end_date: extractedData.endDate,
+          reason: extractedData.reason || extractedData.diagnosis || 'Справка',
+          source: 'DIRECT_API'
         }),
       });
 
       gasResult = await gasResponse.json();
     }
 
-    if (gasResult && gasResult.chat_id && gasResult.topic_medical_id && process.env.TELEGRAM_BOT_TOKEN) {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (gasResult && gasResult.chat_id && gasResult.topic_medical_id && botToken) {
       const tgText = 
-        `🏥 *МЕДИЦИНСКАЯ СПРАВКА / ЗАМОРОЗКА*\n\n` +
-        `👤 *Ученик:* ${gasResult.student_name || extractedData.child_name || 'Не указан'}\n` +
-        `📅 *Период:* с ${extractedData.start_date} по ${extractedData.end_date}\n` +
-        `❄️ *Дней заморозки:* ${gasResult.days_frozen || '—'}\n` +
-        `📝 *Диагноз/Причина:* ${extractedData.diagnosis || 'Не указан'}`;
+        `🏥 <b>МЕДИЦИНСКАЯ СПРАВКА / ЗАМОРОЗКА</b>\n\n` +
+        `👤 <b>Ученик:</b> ${gasResult.student_name || extractedData.childName || 'Не указан'}\n` +
+        `📅 <b>Период:</b> с ${extractedData.startDate} по ${extractedData.endDate}\n` +
+        `❄️ <b>Дней заморозки:</b> ${gasResult.days_frozen || '—'}\n` +
+        `📝 <b>Диагноз/Причина:</b> ${extractedData.reason || 'Не указан'}`;
 
-      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: gasResult.chat_id,
-          message_thread_id: gasResult.topic_medical_id,
+          message_thread_id: Number(gasResult.topic_medical_id),
           text: tgText,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
         }),
       });
     }
