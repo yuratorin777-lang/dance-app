@@ -345,142 +345,139 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let ocrData: any = null;
 
   // --- 2.1 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
-  if (msg) {
-    const fileName = msg.document?.file_name || '';
-    const lowerCaption = caption.toLowerCase();
-    const lowerFileName = fileName.toLowerCase();
+if (msg) {
+  const fileName = msg.document?.file_name || '';
+  const lowerCaption = caption.toLowerCase();
+  const lowerFileName = fileName.toLowerCase();
 
-    const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
-    const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
+  const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
+  const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
-    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница'].some(
-      kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
-    );
+  const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница'].some(
+    kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
+  );
 
-    if (isMedicalTopic || hasMedicalKeywords) {
-      isMedical = true;
-    }
+  // 🎯 Принудительно устанавливаем флаг справки по топику или ключевым словам
+  if (isMedicalTopic || hasMedicalKeywords) {
+    isMedical = true;
+  }
 
-    const fileId = msg.photo 
-      ? msg.photo[msg.photo.length - 1].file_id 
-      : msg.document?.file_id;
+  const fileId = msg.photo 
+    ? msg.photo[msg.photo.length - 1].file_id 
+    : msg.document?.file_id;
 
-    let imageBase64: string | null = null;
+  let imageBase64: string | null = null;
 
-    if (fileId && botToken) {
-      try {
-        const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-        const fileData = await fileRes.json();
-        if (fileData.ok && fileData.result?.file_path) {
-          fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-          imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        }
-      } catch (e) {
-        console.error('Error fetching Telegram file URL:', e);
-      }
-    }
-
-    const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
-    if (studentIdMatch) {
-      studentId = studentIdMatch[0].toUpperCase();
-    }
-
-    const mimeType = msg.document?.mime_type || 'image/jpeg';
-
-    if (imageBase64) {
-      try {
-        if (isMedical) {
-          ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-        } else {
-          // 🛡️ Защита 2: Сначала проверяем на справку
-          const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          
-          // Строгая проверка полей
-          const hasValidMedicalData = medicalCheck && (
-            medicalCheck.is_valid === true || 
-            (medicalCheck.startDate && medicalCheck.startDate !== 'null') || 
-            (medicalCheck.start_date && medicalCheck.start_date !== 'null') ||
-            (medicalCheck.childName && medicalCheck.childName !== 'null') ||
-            (medicalCheck.child_name && medicalCheck.child_name !== 'null')
-          );
-
-          if (hasValidMedicalData) {
-            ocrData = medicalCheck;
-            isMedical = true; // 🎯 Зажимаем флаг Справки!
-          } else {
-            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-          }
-        }
-      } catch (err) {
-        console.error('Gemini OCR process error:', err);
-      }
-    }
-  } 
-  // --- 2.2 ДЛЯ DIRECT API (ИЗ ЛК) ---
-  else if (isDirectApiCall && fileUrl) {
+  if (fileId && botToken) {
     try {
-      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-      if (imageBase64) {
-        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-        ocrData = isMedical 
-          ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-          : await analyzeReceipt(imageBase64, mimeType, caption);
+      const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+      const fileData = await fileRes.json();
+      if (fileData.ok && fileData.result?.file_path) {
+        fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+        imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
       }
-    } catch (err) {
-      console.error('Gemini OCR error for direct LK API call:', err);
+    } catch (e) {
+      console.error('Error fetching Telegram file URL:', e);
     }
   }
 
-  // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
-  if (googleScriptUrl) {
-    // 🎯 Расширенный поиск имени: проверяем подпись, а затем ВСЕ возможные поля OCR
-    const searchQuery = (
-      caption || 
-      ocrData?.payerName || 
-      ocrData?.payer_name ||
-      ocrData?.studentName || 
-      ocrData?.student_name ||
-      ocrData?.childName || 
-      ocrData?.child_name || 
-      ''
-    ).trim();
+  const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
+  if (studentIdMatch) {
+    studentId = studentIdMatch[0].toUpperCase();
+  }
 
-    // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD
-    const payload: Record<string, any> = isMedical 
-      ? {
-          action: 'APPLY_FREEZE',
-          ...(studentId ? { studentId } : {}),
-          studentName: searchQuery,
-          searchQuery: searchQuery,
-          child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
-          fileUrl: fileUrl,
-          startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
-          endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
-          days: ocrData?.days || null,
-          reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка',
-          source: msg ? 'TELEGRAM' : 'LK',
-          telegram_id: chatId,
-          chat_id: chatId,
-          thread_id: threadId,
-          topic_id: threadId,
-          message_id: msg?.message_id || null
+  const mimeType = msg.document?.mime_type || 'image/jpeg';
+
+  if (imageBase64) {
+    try {
+      // 🎯 ЕСЛИ ЭТО ТОПИК СПРАВОК ИЛИ ЕСТЬ КЛЮЧЕВЫЕ СЛОВА — РАБОТАЕМ ТОЛЬКО КАК СО СПРАВКОЙ
+      if (isMedical) {
+        ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+      } else {
+        // Если не уверены, сначала проверяем на чек!
+        const receiptCheck = await analyzeReceipt(imageBase64, mimeType, caption);
+        
+        // Если OCR чека нашел сумму — это 100% чек
+        if (receiptCheck && receiptCheck.amount) {
+          ocrData = receiptCheck;
+          isMedical = false;
+        } else {
+          // Иначе пробуем распарсить как справку
+          const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+          if (medicalCheck && (medicalCheck.startDate || medicalCheck.childName)) {
+            ocrData = medicalCheck;
+            isMedical = true;
+          } else {
+            ocrData = receiptCheck; // Фоллбэк на чек
+          }
         }
-      : {
-          action: 'PROCESS_RECEIPT',
-          ...(studentId ? { studentId } : {}),
-          studentName: searchQuery,
-          searchQuery: searchQuery,
-          rawCaption: caption || '',
-          fileUrl: fileUrl,
-          amount: ocrData?.amount || update.amount || null,
-          date: ocrData?.date || update.date || null,
-          source: msg ? 'TELEGRAM' : 'LK',
-          telegram_id: chatId,
-          chat_id: chatId,
-          thread_id: threadId,
-          topic_id: threadId,
-          message_id: msg?.message_id || null
-        };
+      }
+    } catch (err) {
+      console.error('Gemini OCR process error:', err);
+    }
+  }
+} 
+// --- 2.2 ДЛЯ DIRECT API (ИЗ ЛК) ---
+else if (isDirectApiCall && fileUrl) {
+  try {
+    const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+    if (imageBase64) {
+      const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+      ocrData = isMedical 
+        ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
+        : await analyzeReceipt(imageBase64, mimeType, caption);
+    }
+  } catch (err) {
+    console.error('Gemini OCR error for direct LK API call:', err);
+  }
+}
+
+// --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
+if (googleScriptUrl) {
+  // 🎯 Надежный поиск имени для всех типов
+  const searchQuery = (
+    caption || 
+    ocrData?.childName || 
+    ocrData?.child_name || 
+    ocrData?.payerName || 
+    ocrData?.studentName || 
+    ''
+  ).trim();
+
+  // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD
+  const payload: Record<string, any> = isMedical 
+    ? {
+        action: 'APPLY_FREEZE',
+        ...(studentId ? { studentId } : {}),
+        searchQuery: searchQuery,
+        child_name: searchQuery,
+        fileUrl: fileUrl,
+        startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
+        endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
+        days: ocrData?.days || null,
+        reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка',
+        source: msg ? 'TELEGRAM' : 'LK',
+        telegram_id: chatId,
+        chat_id: chatId,
+        thread_id: threadId,
+        topic_id: threadId,
+        message_id: msg?.message_id || null
+      }
+    : {
+        action: 'PROCESS_RECEIPT',
+        ...(studentId ? { studentId } : {}),
+        searchQuery: searchQuery,
+        rawCaption: caption || '',
+        fileUrl: fileUrl,
+        amount: ocrData?.amount || update.amount || null,
+        date: ocrData?.date || update.date || null,
+        source: msg ? 'TELEGRAM' : 'LK',
+        telegram_id: chatId,
+        chat_id: chatId,
+        thread_id: threadId,
+        topic_id: threadId,
+        message_id: msg?.message_id || null
+      };
 
     console.log('Sending payload to GAS:', JSON.stringify(payload));
 
