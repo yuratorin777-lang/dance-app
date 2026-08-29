@@ -86,7 +86,6 @@ export async function POST(req: Request) {
         body: JSON.stringify({
           action: 'APPLY_FREEZE',
           studentId: studentId || null,
-          child_name: extractedData.child_name, // 👈 ВОТ СЮДА ДОБАВЛЯЕМ
           searchQuery: extractedData.child_name || caption || '',
           startDate: extractedData.start_date,
           endDate: extractedData.end_date,
