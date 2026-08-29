@@ -338,142 +338,119 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
-  // 🛡️ Защита 1: Если action уже содержит freeze/medical — сразу считаем медицинским документом
-  let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
   let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // --- 2.1 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
+  // 1. ОПРЕДЕЛЕНИЕ ТИПА ДОКУМЕНТА (СПРАВКА ИЛИ ЧЕК)
+  let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
+
   if (msg) {
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
+    // Сверяем топик справок
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
-    const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
+    const isMedicalTopic = !!envMedicalTopicId && (String(threadId).trim() === String(envMedicalTopicId).trim());
 
-    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница'].some(
-      kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
-    );
+    // Расширенный поиск ключевых слов
+    const medicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница', 'справку', 'болеем'];
+    const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
+    // Если совпал топик ИЛИ ключевое слово ИЛИ это PDF (часто справки слали файлом)
     if (isMedicalTopic || hasMedicalKeywords) {
       isMedical = true;
     }
+  }
 
-    const fileId = msg.photo 
-      ? msg.photo[msg.photo.length - 1].file_id 
-      : msg.document?.file_id;
+  const fileId = msg?.photo 
+    ? msg.photo[msg.photo.length - 1].file_id 
+    : msg?.document?.file_id;
 
-    let imageBase64: string | null = null;
+  let imageBase64: string | null = null;
 
-    if (fileId && botToken) {
-      try {
-        const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
-        const fileData = await fileRes.json();
-        if (fileData.ok && fileData.result?.file_path) {
-          fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-          imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        }
-      } catch (e) {
-        console.error('Error fetching Telegram file URL:', e);
-      }
-    }
-
-    const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
-    if (studentIdMatch) {
-      studentId = studentIdMatch[0].toUpperCase();
-    }
-
-    const mimeType = msg.document?.mime_type || 'image/jpeg';
-
-    if (imageBase64) {
-      try {
-        if (isMedical) {
-          ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-        } else {
-          // 🛡️ Защита 2: Сначала проверяем на справку
-          const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          
-          // Строгая проверка полей
-          const hasValidMedicalData = medicalCheck && (
-            medicalCheck.is_valid === true || 
-            (medicalCheck.startDate && medicalCheck.startDate !== 'null') || 
-            (medicalCheck.start_date && medicalCheck.start_date !== 'null') ||
-            (medicalCheck.childName && medicalCheck.childName !== 'null') ||
-            (medicalCheck.child_name && medicalCheck.child_name !== 'null')
-          );
-
-          if (hasValidMedicalData) {
-            ocrData = medicalCheck;
-            isMedical = true; // 🎯 Зажимаем флаг Справки!
-          } else {
-            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-          }
-        }
-      } catch (err) {
-        console.error('Gemini OCR process error:', err);
-      }
-    }
-  } 
-  // --- 2.2 ДЛЯ DIRECT API (ИЗ ЛК) ---
-  else if (isDirectApiCall && fileUrl) {
+  if (fileId && botToken) {
     try {
-      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-      if (imageBase64) {
-        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-        ocrData = isMedical 
-          ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-          : await analyzeReceipt(imageBase64, mimeType, caption);
+      const fileRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+      const fileData = await fileRes.json();
+      if (fileData.ok && fileData.result?.file_path) {
+        fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+        imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
       }
-    } catch (err) {
-      console.error('Gemini OCR error for direct LK API call:', err);
+    } catch (e) {
+      console.error('Error fetching Telegram file URL:', e);
     }
   }
 
-  // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
+  // Извлечение ID ученика из подписи (например STD-123 или LD-123)
+  const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
+  if (studentIdMatch) {
+    studentId = studentIdMatch[0].toUpperCase();
+  }
+
+  const mimeType = msg?.document?.mime_type || 'image/jpeg';
+
+  // 2. OCR ОБРАБОТКА
+  if (imageBase64) {
+    try {
+      if (isMedical) {
+        // 🏥 ЖЕСТКО ВЫЗЫВАЕМ ТОЛЬКО МЕДИЦИНСКИЙ OCR
+        ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+      } else {
+        // Если флаг НЕ выставился, сначала проверяем Gemini на справку
+        const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+        
+        // Проверяем, нашел ли Gemini признак справки
+        if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date || medicalCheck.childName || medicalCheck.child_name || medicalCheck.diagnosis)) {
+          ocrData = medicalCheck;
+          isMedical = true; // Зажимаем флаг Справки!
+        } else {
+          // И только если не справка — обрабатываем как чек
+          ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+        }
+      }
+    } catch (err) {
+      console.error('Gemini OCR process error:', err);
+    }
+  }
+
+  // 3. ОТПРАВКА В GOOGLE APPS SCRIPT
   if (googleScriptUrl) {
     const searchQuery = caption || ocrData?.childName || ocrData?.child_name || '';
 
-    // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD
-    const payload: Record<string, any> = isMedical 
-      ? {
-          action: 'APPLY_FREEZE',
-          ...(studentId ? { studentId } : {}),
-          searchQuery: searchQuery,
-          child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
-          fileUrl: fileUrl,
-          startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
-          endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
-          days: ocrData?.days || null,
-          reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка',
-          source: msg ? 'TELEGRAM' : 'LK',
-          telegram_id: chatId,
-          chat_id: chatId,
-          thread_id: threadId,
-          topic_id: threadId,
-          message_id: msg?.message_id || null
-        }
-      : {
-          action: 'PROCESS_RECEIPT',
-          ...(studentId ? { studentId } : {}),
-          searchQuery: searchQuery,
-          fileUrl: fileUrl,
-          amount: ocrData?.amount || update.amount || null,
-          date: ocrData?.date || update.date || null,
-          source: msg ? 'TELEGRAM' : 'LK',
-          telegram_id: chatId,
-          chat_id: chatId,
-          thread_id: threadId,
-          topic_id: threadId,
-          message_id: msg?.message_id || null
-        };
+    // 🔒 СТРОГИЙ ACTION: Выбираем экшен НАВЕРНЯКА
+    const targetAction = isMedical ? 'APPLY_FREEZE' : 'PROCESS_RECEIPT';
 
-    console.log('Sending payload to GAS:', JSON.stringify(payload));
+    const payload: Record<string, any> = {
+      action: targetAction,
+      ...(studentId ? { studentId } : {}),
+      searchQuery: searchQuery,
+      fileUrl: fileUrl,
+      source: msg ? 'TELEGRAM' : 'LK',
+      telegram_id: chatId,
+      chat_id: chatId,
+      thread_id: threadId,
+      topic_id: threadId,
+      message_id: msg?.message_id || null
+    };
+
+    if (isMedical) {
+      payload.child_name = ocrData?.childName || ocrData?.child_name || searchQuery;
+      payload.startDate = ocrData?.startDate || ocrData?.start_date || update.startDate || null;
+      payload.endDate = ocrData?.endDate || ocrData?.end_date || update.endDate || null;
+      payload.reason = ocrData?.reason || ocrData?.diagnosis || caption || 'Справка';
+      payload.days = ocrData?.days || null;
+    } else {
+      payload.amount = ocrData?.amount || update.amount || null;
+      payload.date = ocrData?.date || update.date || null;
+    }
+
+    console.log(`[PAYLOAD OUT] Action: ${targetAction} | Query: ${searchQuery}`);
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
-    // 🛑 Ошибка поиска в базе
+    // Ошибка поиска в базе
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
       const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите имя ученика в подписи.';
       
@@ -493,7 +470,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // 🟢 Успешная обработка
+    // Успешный ответ
     if (result && (result.status === 'success' || result.ok)) {
       if (!msg && botToken) {
         const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
