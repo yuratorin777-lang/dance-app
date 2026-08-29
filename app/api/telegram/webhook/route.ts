@@ -331,14 +331,15 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
 
 // 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API ИЗ ЛК)
 const msg = update.message || update.edited_message;
-const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT';
+const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
   let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
-  let isMedical = update.action === 'APPLY_FREEZE';
+  // 🛡️ Защита 1: Если action уже содержит freeze/medical — сразу считаем медицинским документом
+  let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
   let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
   let ocrData: any = null;
@@ -349,17 +350,16 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    // 💡 Сверяем ID топика справок из .env
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
     const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
-    // Расширенный список слов справок
     const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница'].some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
-    // 🛑 Жестко фиксируем справку, если совпал топик ИЛИ ключевое слово
-    isMedical = isMedicalTopic || hasMedicalKeywords;
+    if (isMedicalTopic || hasMedicalKeywords) {
+      isMedical = true;
+    }
 
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
@@ -380,7 +380,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
 
-    // Извлечение ID ученика из подписи (например STD-123)
     const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
     if (studentIdMatch) {
       studentId = studentIdMatch[0].toUpperCase();
@@ -390,19 +389,25 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (imageBase64) {
       try {
-        // Если флаг isMedical УЖЕ выставился (по топику или словам) — делаем ТОЛЬКО медицинский OCR
         if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          // Если флаг НЕ выставился, сначала проверяем на справку через Gemini
+          // 🛡️ Защита 2: Сначала проверяем на справку
           const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
           
-          // Проверяем, нашел ли Gemini признак справки
-          if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date || medicalCheck.childName || medicalCheck.child_name || medicalCheck.diagnosis)) {
+          // Строгая проверка полей
+          const hasValidMedicalData = medicalCheck && (
+            medicalCheck.is_valid === true || 
+            (medicalCheck.startDate && medicalCheck.startDate !== 'null') || 
+            (medicalCheck.start_date && medicalCheck.start_date !== 'null') ||
+            (medicalCheck.childName && medicalCheck.childName !== 'null') ||
+            (medicalCheck.child_name && medicalCheck.child_name !== 'null')
+          );
+
+          if (hasValidMedicalData) {
             ocrData = medicalCheck;
             isMedical = true; // 🎯 Зажимаем флаг Справки!
           } else {
-            // И только если Gemini уверен, что это не справка — обрабатываем как чек
             ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
           }
         }
@@ -430,18 +435,17 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   if (googleScriptUrl) {
     const searchQuery = caption || ocrData?.childName || ocrData?.child_name || '';
 
-    // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD Без шансов подмены action!
+    // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD
     const payload: Record<string, any> = isMedical 
       ? {
-          action: 'APPLY_FREEZE', // 🟢 Всегда Заморозка!
+          action: 'APPLY_FREEZE',
           ...(studentId ? { studentId } : {}),
           searchQuery: searchQuery,
           child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
           fileUrl: fileUrl,
           startDate: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
           endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
-          start_date: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
-          end_date: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
+          days: ocrData?.days || null,
           reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка',
           source: msg ? 'TELEGRAM' : 'LK',
           telegram_id: chatId,
@@ -451,7 +455,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           message_id: msg?.message_id || null
         }
       : {
-          action: 'PROCESS_RECEIPT', // 🔴 Оплата только если isMedical === false
+          action: 'PROCESS_RECEIPT',
           ...(studentId ? { studentId } : {}),
           searchQuery: searchQuery,
           fileUrl: fileUrl,
@@ -465,7 +469,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           message_id: msg?.message_id || null
         };
 
-    console.log('Sending payload to GAS:', JSON.stringify(payload)); // Лог для отладки
+    console.log('Sending payload to GAS:', JSON.stringify(payload));
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
@@ -489,7 +493,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // 🟢 Успешная обработка (ответ в админ-чат, если вызов был из ЛК)
+    // 🟢 Успешная обработка
     if (result && (result.status === 'success' || result.ok)) {
       if (!msg && botToken) {
         const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
