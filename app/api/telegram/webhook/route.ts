@@ -335,7 +335,7 @@ const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'P
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
-  let threadId = msg?.message_thread_id || update.thread_id || null;
+  let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
   let isMedical = update.action === 'APPLY_FREEZE';
@@ -343,21 +343,22 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // --- 2.1 ИСХОДНАЯ РАБОЧАЯ ЛОГИКА ДЛЯ ТЕЛЕГРАМ ---
+  // --- 2.1 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
   if (msg) {
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    // 💡 Надежное сравнение threadId (и как строки, и как числа)
+    // 💡 Сверяем ID топика справок из .env
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
     const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
-    // Расширенный список ключевых слов справок
-    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз'].some(
+    // Расширенный список слов справок
+    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр', 'клиника', 'больница'].some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
+    // 🛑 Жестко фиксируем справку, если совпал топик ИЛИ ключевое слово
     isMedical = isMedicalTopic || hasMedicalKeywords;
 
     const fileId = msg.photo 
@@ -379,7 +380,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
 
-    // Извлечение ID ученика из подписи
+    // Извлечение ID ученика из подписи (например STD-123)
     const studentIdMatch = caption.match(/(STD-\d+|ST-\d+|LD-\d+)/i);
     if (studentIdMatch) {
       studentId = studentIdMatch[0].toUpperCase();
@@ -389,16 +390,19 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (imageBase64) {
       try {
+        // Если флаг isMedical УЖЕ выставился (по топику или словам) — делаем ТОЛЬКО медицинский OCR
         if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          // Если тип явно не определён (нет ключевых слов в подписи), сначала тестируем как справку
+          // Если флаг НЕ выставился, сначала проверяем на справку через Gemini
           const medicalCheck = await analyzeMedicalDoc(imageBase64, mimeType, caption);
           
-          if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date || medicalCheck.childName || medicalCheck.child_name)) {
+          // Проверяем, нашел ли Gemini признак справки
+          if (medicalCheck && (medicalCheck.is_valid || medicalCheck.startDate || medicalCheck.start_date || medicalCheck.childName || medicalCheck.child_name || medicalCheck.diagnosis)) {
             ocrData = medicalCheck;
-            isMedical = true; // 💡 Фиксируем, что это справка!
+            isMedical = true; // 🎯 Зажимаем флаг Справки!
           } else {
+            // И только если Gemini уверен, что это не справка — обрабатываем как чек
             ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
           }
         }
@@ -424,12 +428,12 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
   // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
   if (googleScriptUrl) {
-    // Собираем точный searchQuery из подписи или из того, что извлек Gemini
     const searchQuery = caption || ocrData?.childName || ocrData?.child_name || '';
 
+    // 🔒 СТРОГОЕ ФОРМИРОВАНИЕ PAYLOAD Без шансов подмены action!
     const payload: Record<string, any> = isMedical 
       ? {
-          action: 'APPLY_FREEZE',
+          action: 'APPLY_FREEZE', // 🟢 Всегда Заморозка!
           ...(studentId ? { studentId } : {}),
           searchQuery: searchQuery,
           child_name: ocrData?.childName || ocrData?.child_name || searchQuery,
@@ -438,7 +442,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           endDate: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
           start_date: ocrData?.startDate || ocrData?.start_date || update.startDate || null,
           end_date: ocrData?.endDate || ocrData?.end_date || update.endDate || null,
-          reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка из Telegram',
+          reason: ocrData?.reason || ocrData?.diagnosis || caption || 'Справка',
           source: msg ? 'TELEGRAM' : 'LK',
           telegram_id: chatId,
           chat_id: chatId,
@@ -447,7 +451,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           message_id: msg?.message_id || null
         }
       : {
-          action: 'PROCESS_RECEIPT',
+          action: 'PROCESS_RECEIPT', // 🔴 Оплата только если isMedical === false
           ...(studentId ? { studentId } : {}),
           searchQuery: searchQuery,
           fileUrl: fileUrl,
@@ -461,11 +465,13 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           message_id: msg?.message_id || null
         };
 
+    console.log('Sending payload to GAS:', JSON.stringify(payload)); // Лог для отладки
+
     const result = await callAppsScript(googleScriptUrl, payload);
 
-    // 🛑 1. Если ошибка поиска ученика
+    // 🛑 Ошибка поиска в базе
     if (result && (result.status === 'error' || result.ok === false || result.error)) {
-      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите ID ученика или ФИО в подписи к фото.';
+      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите имя ученика в подписи.';
       
       if (chatId && msg) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -483,14 +489,14 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
     }
 
-    // 🟢 2. Если успех (отправка карточки в админ-чат только для ЛК)
+    // 🟢 Успешная обработка (ответ в админ-чат, если вызов был из ЛК)
     if (result && (result.status === 'success' || result.ok)) {
       if (!msg && botToken) {
         const studentName = result.student_name || result.studentName || result.studentId || payload.studentId;
         const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
 
         const successText = isMedical 
-          ? `🏥 <b>Справка успешно принята из ЛК!</b>\n` +
+          ? `🏥 <b>Справка успешно обработана из ЛК!</b>\n` +
             `👤 Ученик: ${displayName}\n` +
             `📅 Период: <b>${result.startDate || payload.startDate || 'по справке'}</b> по <b>${result.endDate || payload.endDate || '—'}</b>\n` +
             `❄️ Дней продления: <b>${result.days_frozen || result.days || '—'}</b>`
@@ -498,9 +504,9 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
             `👤 Ученик: ${displayName}\n` +
             `💰 Сумма: <b>${result.amount || payload.amount || '—'} ₽</b>`;
 
-        const targetGroupChatId = result.chat_id || result.groupId || result.group_chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
+        const targetGroupChatId = result.chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
         const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
-        const targetTopicId = result.topic_medical_id || result.medical_topic_id || result.topic_payments_id || result.payment_topic_id || envTopicId;
+        const targetTopicId = result.topic_id || envTopicId;
 
         if (targetGroupChatId) {
           await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -512,7 +518,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
               text: successText,
               parse_mode: 'HTML'
             })
-          }).catch(e => console.error('Error sending message to group topic from LK:', e));
+          }).catch(e => console.error('Error sending message from LK:', e));
         }
       }
 
