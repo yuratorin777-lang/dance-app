@@ -331,7 +331,8 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
 
 // 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API ИЗ ЛК)
 const msg = update.message || update.edited_message;
-const isDirectApiCall = update.action === 'APPLY_FREEZE' || update.action === 'PROCESS_RECEIPT' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
+const action = update.action || '';
+const isDirectApiCall = action === 'PROCESS_RECEIPT' || action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze';
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
@@ -343,27 +344,15 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // --- 2.1 ДЛЯ DIRECT API (ИЗ ЛК) ---
-  if (isDirectApiCall) {
-    // Жестко определяем тип по входящему action из ЛК
-    isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
+  // -------------------------------------------------------------------------
+  // ШАГ 1: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК)
+  // -------------------------------------------------------------------------
 
-    if (fileUrl) {
-      try {
-        const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        if (imageBase64) {
-          const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-          ocrData = isMedical 
-            ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-            : await analyzeReceipt(imageBase64, mimeType, caption);
-        }
-      } catch (err) {
-        console.error('Gemini OCR error for direct LK API call:', err);
-      }
-    }
-  } 
-  // --- 2.2 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
-  else if (msg) {
+  if (isDirectApiCall) {
+    // Из ЛК тип определяется строго по action
+    isMedical = (action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE');
+  } else if (msg) {
+    // Из Telegram: проверяем топик справок и ключевые слова
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
@@ -373,21 +362,29 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
-      'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
-      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили'
+      'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр'
     ];
 
     const hasMedicalKeywords = medicalKeywords.some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
-    const initialMedicalCheck = isMedicalTopic || hasMedicalKeywords;
+    // ЖЕСТКОЕ ПРАВИЛО: Если топик справок ИЛИ есть мед. слова -> это СПРАВКА!
+    if (isMedicalTopic || hasMedicalKeywords) {
+      isMedical = true;
+    } else {
+      isMedical = false;
+    }
+  }
 
+  // -------------------------------------------------------------------------
+  // ШАГ 2: ПОЛУЧЕНИЕ ССЫЛКИ НА ФАЙЛ И OCR
+  // -------------------------------------------------------------------------
+
+  if (msg) {
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
       : msg.document?.file_id;
-
-    let imageBase64: string | null = null;
 
     if (fileId && botToken) {
       try {
@@ -395,7 +392,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         const fileData = await fileRes.json();
         if (fileData.ok && fileData.result?.file_path) {
           fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-          imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
         }
       } catch (e) {
         console.error('Error fetching Telegram file URL:', e);
@@ -406,31 +402,40 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     if (studentIdMatch) {
       studentId = studentIdMatch[0].toUpperCase();
     }
+  }
 
-    const mimeType = msg.document?.mime_type || 'image/jpeg';
-
-    if (imageBase64) {
-      try {
-        const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-        const hasMedicalOcrFields = tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis);
-
-        if (hasMedicalOcrFields || (initialMedicalCheck && !lowerCaption.includes('чек') && !lowerCaption.includes('оплата'))) {
-          isMedical = true;
-          ocrData = tempMedicalData;
+  // Вызов нужного анализатора
+  if (fileUrl) {
+    try {
+      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+      if (imageBase64) {
+        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+        
+        if (isMedical) {
+          ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          isMedical = false;
           ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
         }
-      } catch (err) {
-        console.error('Gemini OCR process error:', err);
       }
+    } catch (err) {
+      console.error('Gemini OCR process error:', err);
     }
   }
 
-  // --- 2.3 ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT ---
+  // -------------------------------------------------------------------------
+  // ШАГ 3: ИМЯ УЧЕНИКА И СУММА (ПРИОРИТЕТ ПОДПИСИ НАД OCR ЧЕКА)
+  // -------------------------------------------------------------------------
   if (googleScriptUrl) {
-    const extractedName = ocrData?.child_name || ocrData?.childName || ocrData?.sender_name || ocrData?.senderName || '';
-    const searchQuery = (caption || extractedName || update.searchQuery || '').trim();
+    // ДЛЯ ЧЕКА: В первую очередь берем подпись родителя/запрос, 
+    // т.к. в самом банковском чеке указано имя РОДИТЕЛЯ, а не ученика!
+    const captionStudentName = caption || update.studentName || update.searchQuery || '';
+    const ocrChildName = ocrData?.child_name || ocrData?.childName || '';
+    const ocrSenderName = ocrData?.sender_name || ocrData?.senderName || '';
+
+    // Если это справка — приоритет у имени из справки, если чек — приоритет у подписи родителя
+    const studentSearchQuery = isMedical 
+      ? (ocrChildName || captionStudentName || update.childName || '')
+      : (captionStudentName || ocrChildName || ocrSenderName || '');
 
     let finalAmount = ocrData?.amount || update.amount || null;
     if (!finalAmount && caption) {
@@ -447,27 +452,33 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       payload = {
         action: 'APPLY_FREEZE',
         ...(studentId ? { studentId } : {}),
-        searchQuery: searchQuery,
-        childName: extractedName || searchQuery,
-        child_name: extractedName || searchQuery,
+        searchQuery: studentSearchQuery.trim(),
+        childName: studentSearchQuery.trim(),
+        child_name: studentSearchQuery.trim(),
         fileUrl: fileUrl,
         startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
         endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
-        days: ocrData?.days || null,
+        days: ocrData?.days || update.days || null,
         reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка',
         source: msg ? 'TELEGRAM' : 'LK',
-        telegram_id: chatId,
-        chat_id: chatId,
-        thread_id: threadId,
-        topic_id: threadId,
-        message_id: msg?.message_id || null
+        
+        // Передаем параметры ТГ ТОЛЬКО для запросов из Telegram!
+        // Для ЛК ничего не передаем, чтобы не было двойных уведомлений.
+        ...(msg ? {
+          telegram_id: chatId,
+          chat_id: chatId,
+          thread_id: threadId,
+          topic_id: threadId,
+          message_id: msg?.message_id || null
+        } : {})
       };
     } else {
       payload = {
         action: 'PROCESS_RECEIPT',
         ...(studentId ? { studentId } : {}),
-        searchQuery: searchQuery,
-        senderName: extractedName || searchQuery,
+        searchQuery: studentSearchQuery.trim(),
+        studentName: studentSearchQuery.trim(),
+        senderName: ocrSenderName || studentSearchQuery.trim(),
         rawCaption: caption || '',
         fileUrl: fileUrl,
         amount: finalAmount,
@@ -475,47 +486,18 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         date: ocrData?.timestamp || update.date || null,
         paymentType: ocrData?.payment_type || 'SUBSCRIPTION',
         source: msg ? 'TELEGRAM' : 'LK',
-        telegram_id: chatId,
-        chat_id: chatId,
-        thread_id: threadId,
-        topic_id: threadId,
-        message_id: msg?.message_id || null
+
+        ...(msg ? {
+          telegram_id: chatId,
+          chat_id: chatId,
+          thread_id: threadId,
+          topic_id: threadId,
+          message_id: msg?.message_id || null
+        } : {})
       };
     }
 
     const result = await callAppsScript(googleScriptUrl, payload);
-
-    if (!result) {
-      if (chatId && msg && botToken) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: Number(threadId) } : {}),
-            ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
-            text: `⚠️ <b>Ошибка связи со скриптом Google Sheets</b>`,
-            parse_mode: 'HTML'
-          })
-        }).catch(e => console.error('TG Send Error:', e));
-      }
-      return NextResponse.json({ ok: false, error: 'GAS unreachable' }, { headers: corsHeaders });
-    }
-
-    if (msg && chatId && botToken && (result.status === 'error' || result.ok === false)) {
-      const errorMsg = result?.message || 'Ученик не найден в базе. Пожалуйста, напишите имя и фамилию ученика в подписи к фото.';
-      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          ...(threadId ? { message_thread_id: Number(threadId) } : {}),
-          ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
-          text: `⚠️ <b>Внимание:</b> ${errorMsg}`,
-          parse_mode: 'HTML'
-        })
-      }).catch(e => console.error('TG Error Reply failed:', e));
-    }
 
     return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
   }
