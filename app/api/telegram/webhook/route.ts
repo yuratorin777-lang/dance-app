@@ -352,8 +352,14 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
     const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
-    // Проверка на ключевые слова справки
-    const hasMedicalKeywords = ['справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 'illness', 'doctor', 'заболел', 'болел', 'диагноз', 'педиатр'].some(
+    // Расширенный список ключевых слов для справок / заморозок
+    const medicalKeywords = [
+      'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
+      'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
+      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили'
+    ];
+
+    const hasMedicalKeywords = medicalKeywords.some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
@@ -391,11 +397,20 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     if (imageBase64) {
       try {
         if (isMedical) {
-          // Вызываем сканирование справки
+          // 🏥 100% Определено как справка по топику/тексту
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          // Вызываем сканирование чека
-          ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+          // ❓ Не уверены. Пробуем сначала отсканировать как справку, если в ней есть явные признаки справки
+          const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+          
+          // Если Gemini распознал даты болезни или диагноз / имя ребенка — это СПРАВКА!
+          if (tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis || tempMedicalData.child_name)) {
+            isMedical = true;
+            ocrData = tempMedicalData;
+          } else {
+            // Иначе это обычный чек
+            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+          }
         }
       } catch (err) {
         console.error('Gemini OCR process error:', err);
@@ -443,6 +458,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         ...(studentId ? { studentId } : {}),
         searchQuery: searchQuery,
         childName: extractedName || searchQuery,
+        child_name: extractedName || searchQuery,
         fileUrl: fileUrl,
         startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
         endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
