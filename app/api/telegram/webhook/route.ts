@@ -350,11 +350,13 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
-    const envPaymentsTopicId = process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
+    // Приводим ID топиков из env и telegram к строке для гарантии точного сравнения
+    const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID ? String(process.env.TELEGRAM_MEDICAL_TOPIC_ID) : null;
+    const envPaymentsTopicId = process.env.TELEGRAM_PAYMENTS_TOPIC_ID ? String(process.env.TELEGRAM_PAYMENTS_TOPIC_ID) : null;
+    const currentThreadId = threadId ? String(threadId) : null;
 
-    const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
-    const isPaymentsTopic = !!envPaymentsTopicId && (String(threadId) === String(envPaymentsTopicId));
+    const isMedicalTopic = !!envMedicalTopicId && (currentThreadId === envMedicalTopicId);
+    const isPaymentsTopic = !!envPaymentsTopicId && (currentThreadId === envPaymentsTopicId);
 
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
@@ -366,13 +368,13 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
-    // Чёткое разделение по топикам Telegram
+    // 🎯 СТРОГОЕ РАЗДЕЛЕНИЕ ТИПА ДОКУМЕНТА:
     if (isMedicalTopic) {
       isMedical = true;
     } else if (isPaymentsTopic) {
       isMedical = false;
     } else {
-      // Если отправили в общий чат без топика — смотрим по ключевым словам
+      // Фолбэк ТОЛЬКО для сообщений из общих чатов без указанного топика
       isMedical = hasMedicalKeywords;
     }
 
@@ -404,6 +406,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (imageBase64) {
       try {
+        // Сканируем строго в соответствии с определенным типом
         if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
@@ -490,7 +493,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const result = await callAppsScript(googleScriptUrl, payload);
     console.log('GAS Result:', JSON.stringify(result));
 
-    // Уведомление об ошибке только если отправляли из Telegram и ученик не найден
+    // Уведомление ОБ ОШИБКЕ ПОИСКА отправляется в TG только для сообщений, отправленных из TG
     if (msg && chatId && botToken && result?.status === 'error') {
       const errorMsg = result?.message || 'Ученик не найден в базе. Укажите имя в подписи к фото.';
       await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -506,8 +509,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }).catch(e => console.error('Error sending TG error:', e));
     }
 
-    // Примечание: Убран дублирующий блок отправки в TG для ЛК (!msg), 
-    // так как GAS сам отправляет карточки в нужные топики на основе вкладки groups.
+    // Вся рассылка успешных карточек при загрузке из ЛК полностью доверена скрипту GAS.
+    // Код отправки сообщений из Vercel удален для предотвращения дублирования.
 
     return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
   }
