@@ -433,122 +433,135 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // --- 2.3 ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT ---
-  if (googleScriptUrl) {
-    
-    // 🔍 Извлекаем Имя/ФИО с учетом всех возможных ключей из твоих OCR модулей
-    const extractedName = ocrData?.child_name || ocrData?.childName || ocrData?.sender_name || ocrData?.senderName || '';
-    const searchQuery = (caption || extractedName).trim();
+if (googleScriptUrl) {
+  // 🔍 Извлекаем Имя/ФИО с учетом всех возможных ключей
+  const extractedName = ocrData?.child_name || ocrData?.childName || ocrData?.sender_name || ocrData?.senderName || '';
+  const searchQuery = (caption || extractedName).trim();
 
-    // 💰 Извлекаем Сумму с фоллбэком на подпись
-    let finalAmount = ocrData?.amount || update.amount || null;
-    if (!finalAmount && caption) {
-      const match = caption.match(/(\d[\d\s]*\d|\d+)\s*(руб|р|rub|₽)?/i);
-      if (match) {
-        const cleanVal = Number(match[1].replace(/\s+/g, ''));
-        if (cleanVal >= 100) finalAmount = cleanVal;
-      }
-    }
-
-    // 🔒 Сборка точного Payload под требования Таблиц
-    let payload: Record<string, any>;
-
-    if (isMedical) {
-      payload = {
-        action: 'APPLY_FREEZE',
-        ...(studentId ? { studentId } : {}),
-        searchQuery: searchQuery,
-        childName: extractedName || searchQuery,
-        child_name: extractedName || searchQuery,
-        fileUrl: fileUrl,
-        startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
-        endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
-        days: ocrData?.days || null,
-        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка',
-        source: msg ? 'TELEGRAM' : 'LK',
-        telegram_id: chatId,
-        chat_id: chatId,
-        thread_id: threadId,
-        topic_id: threadId,
-        message_id: msg?.message_id || null
-      };
-    } else {
-      payload = {
-        action: 'PROCESS_RECEIPT',
-        ...(studentId ? { studentId } : {}),
-        searchQuery: searchQuery,
-        senderName: extractedName || searchQuery,
-        rawCaption: caption || '',
-        fileUrl: fileUrl,
-        amount: finalAmount,
-        timestamp: ocrData?.timestamp || null,
-        date: ocrData?.timestamp || update.date || null,
-        paymentType: ocrData?.payment_type || 'SUBSCRIPTION',
-        source: msg ? 'TELEGRAM' : 'LK',
-        telegram_id: chatId,
-        chat_id: chatId,
-        thread_id: threadId,
-        topic_id: threadId,
-        message_id: msg?.message_id || null
-      };
-    }
-
-    console.log('Sending payload to GAS:', JSON.stringify(payload));
-
-    const result = await callAppsScript(googleScriptUrl, payload);
-
-    // 🛑 Если GAS не смог найти ученика или вернул ошибку
-    if (result && (result.status === 'error' || result.ok === false || result.error)) {
-      const errorMsg = result?.message || result?.error || 'Ученик не найден в базе. Укажите имя в подписи к фото.';
-      
-      if (chatId && msg) {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            ...(threadId ? { message_thread_id: Number(threadId) } : {}),
-            ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
-            text: `⚠️ <b>Ошибка обработки:</b> ${errorMsg}`,
-            parse_mode: 'HTML'
-          })
-        });
-      }
-      return NextResponse.json({ ok: true, handled_error: errorMsg, ocrData }, { headers: corsHeaders });
-    }
-
-    // 🟢 Ответ для вызовов из ЛК
-    if (result && (result.status === 'success' || result.ok)) {
-      if (!msg && botToken) {
-        const studentName = result.student_name || result.studentName || payload.searchQuery;
-        const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
-
-        const successText = isMedical 
-          ? `🏥 <b>Справка принята из ЛК</b>\n👤 Ученик: ${displayName}\n📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>`
-          : `💳 <b>Оплата принята из ЛК</b>\n👤 Ученик: ${displayName}\n💰 Сумма: <b>${payload.amount || '—'} ₽</b>`;
-
-        const targetGroupChatId = result.chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
-        const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
-        const targetTopicId = result.topic_id || envTopicId;
-
-        if (targetGroupChatId) {
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: targetGroupChatId,
-              ...(targetTopicId ? { message_thread_id: Number(targetTopicId) } : {}),
-              text: successText,
-              parse_mode: 'HTML'
-            })
-          }).catch(e => console.error('Error sending LK msg:', e));
-        }
-      }
-
-      return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
+  // 💰 Извлекаем Сумму с фоллбэком на подпись
+  let finalAmount = ocrData?.amount || update.amount || null;
+  if (!finalAmount && caption) {
+    const match = caption.match(/(\d[\d\s]*\d|\d+)\s*(руб|р|rub|₽)?/i);
+    if (match) {
+      const cleanVal = Number(match[1].replace(/\s+/g, ''));
+      if (cleanVal >= 100) finalAmount = cleanVal;
     }
   }
 
-  return NextResponse.json({ ok: true }, { headers: corsHeaders });
+  // 🔒 Сборка точного Payload под требования Таблиц
+  let payload: Record<string, any>;
+
+  if (isMedical) {
+    payload = {
+      action: 'APPLY_FREEZE',
+      ...(studentId ? { studentId } : {}),
+      searchQuery: searchQuery,
+      childName: extractedName || searchQuery,
+      child_name: extractedName || searchQuery,
+      fileUrl: fileUrl,
+      startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
+      endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
+      days: ocrData?.days || null,
+      reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка',
+      source: msg ? 'TELEGRAM' : 'LK',
+      telegram_id: chatId,
+      chat_id: chatId,
+      thread_id: threadId,
+      topic_id: threadId,
+      message_id: msg?.message_id || null
+    };
+  } else {
+    payload = {
+      action: 'PROCESS_RECEIPT',
+      ...(studentId ? { studentId } : {}),
+      searchQuery: searchQuery,
+      senderName: extractedName || searchQuery,
+      rawCaption: caption || '',
+      fileUrl: fileUrl,
+      amount: finalAmount,
+      timestamp: ocrData?.timestamp || null,
+      date: ocrData?.timestamp || update.date || null,
+      paymentType: ocrData?.payment_type || 'SUBSCRIPTION',
+      source: msg ? 'TELEGRAM' : 'LK',
+      telegram_id: chatId,
+      chat_id: chatId,
+      thread_id: threadId,
+      topic_id: threadId,
+      message_id: msg?.message_id || null
+    };
+  }
+
+  console.log('Sending payload to GAS:', JSON.stringify(payload));
+
+  const result = await callAppsScript(googleScriptUrl, payload);
+  console.log('GAS Result:', JSON.stringify(result));
+
+  // 🛑 Если произошла системная ошибка запроса к GAS
+  if (!result) {
+    if (chatId && msg && botToken) {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+          ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
+          text: `⚠️ <b>Ошибка связи со скриптом Google Sheets</b>`,
+          parse_mode: 'HTML'
+        })
+      }).catch(e => console.error('TG Send Error:', e));
+    }
+    return NextResponse.json({ ok: false, error: 'GAS unreachable' }, { headers: corsHeaders });
+  }
+
+  // 🟢 Если сообщение пришло ИЗ ТЕЛЕГРАМ ЧАТА (msg существует), но GAS вернул статус "ученик не найден"
+  // Дополнительно отправляем реплай прямо в чат Telegram для наглядности
+  if (msg && chatId && botToken && result.status === 'error') {
+    const errorMsg = result?.message || 'Ученик не найден в базе. Пожалуйста, напишите имя и фамилию ученика в подписи к фото.';
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+        ...(msg?.message_id ? { reply_to_message_id: msg.message_id } : {}),
+        text: `⚠️ <b>Внимание:</b> ${errorMsg}`,
+        parse_mode: 'HTML'
+      })
+    }).catch(e => console.error('TG Error Reply failed:', e));
+  }
+
+  // 🟢 Ответ для вызовов из ЛК (когда нет msg)
+  if (!msg && botToken) {
+    const studentName = result.student_name || result.studentName || payload.searchQuery;
+    const displayName = studentName ? `<b>${studentName}</b>` : 'не указан';
+
+    const successText = isMedical 
+      ? `🏥 <b>Справка принята из ЛК</b>\n👤 Ученик: ${displayName}\n📅 Период: <b>${payload.startDate || '—'}</b> по <b>${payload.endDate || '—'}</b>`
+      : `💳 <b>Оплата принята из ЛК</b>\n👤 Ученик: ${displayName}\n💰 Сумма: <b>${payload.amount || '—'} ₽</b>`;
+
+    const targetGroupChatId = result.chat_id || process.env.TELEGRAM_ADMIN_GROUP_ID;
+    const envTopicId = isMedical ? process.env.TELEGRAM_MEDICAL_TOPIC_ID : process.env.TELEGRAM_PAYMENTS_TOPIC_ID;
+    const targetTopicId = result.topic_id || envTopicId;
+
+    if (targetGroupChatId) {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetGroupChatId,
+          ...(targetTopicId ? { message_thread_id: Number(targetTopicId) } : {}),
+          text: successText,
+          parse_mode: 'HTML'
+        })
+      }).catch(e => console.error('Error sending LK msg:', e));
+    }
+  }
+
+  return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
+}
+
+return NextResponse.json({ ok: true }, { headers: corsHeaders });
 }
 
     // ------------------------------------------------------------------------
