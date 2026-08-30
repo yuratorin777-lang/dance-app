@@ -254,13 +254,14 @@ export async function POST(req: NextRequest) {
 // SUB-SECTION 2.1.1: ОБРАБОТКА ФОТО/ДОКУМЕНТОВ И ЗАМОРОЗКИ ИЗ ЛК / TELEGRAM
 // ------------------------------------------------------------------------
 
-// 🟢 1. ИЗОЛИРОВАННАЯ ОБРАБОТКА ЗАМОРОЗКИ ИЗ ЛК (С КНОПКАМИ В АДМИН-ЧАТ)
+// 🟢 1. ИЗОЛИРОВАННАЯ ОБРАБОТКА ЗАМОРОЗКИ ИЗ ЛК
 if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze') {
   if (googleScriptUrl) {
     try {
       let ocrData: any = null;
       const docUrl = update.fileUrl || update.docUrl || '';
 
+      // 1. Если прикреплен документ, делаем OCR
       if (docUrl) {
         try {
           const imageBase64 = await downloadTelegramFileAsBase64(docUrl);
@@ -277,6 +278,7 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
       const endDate = ocrData?.endDate || ocrData?.end_date || update.endDate || null;
       const reason = ocrData?.reason || update.reason || 'Запрос заморозки из ЛК';
 
+      // 2. ВАЖНО: Записываем заморозку в Гугл Таблицу! (Сценарий НЕ ломается)
       const result = await callAppsScript(googleScriptUrl, {
         action: 'APPLY_FREEZE',
         leadId: update.leadId || update.studentId,
@@ -293,6 +295,7 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
       const adminGroupId = process.env.TELEGRAM_ADMIN_GROUP_ID;
       const freezeTopicId = process.env.TELEGRAM_FREEZE_TOPIC_ID;
 
+      // 3. Отправляем карточку с кнопками админам
       if (adminGroupId && botToken) {
         const adminMsg = `❄️ <b>Запрос на заморозку из ЛК</b>\n\n` +
           `👤 <b>Ученик/Лид:</b> ${update.studentName || update.leadId || 'Не указан'}\n` +
@@ -320,7 +323,10 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
         }).catch(err => console.error('Error sending freeze alert to admin group:', err));
       }
 
+      // 🛑 ВАЖНО: Возвращаем ответ и прерываем выполнение, 
+      // чтобы скрипт НЕ шёл дальше в Блок 2 (где обрабатываются обычные справки и отправляется 2-е сообщение)!
       return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
+
     } catch (err) {
       console.error('Error forwarding freeze request to Apps Script:', err);
       return NextResponse.json({ ok: false, error: 'Apps Script error' }, { status: 500, headers: corsHeaders });
@@ -332,7 +338,9 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
 // 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API ИЗ ЛК)
 const msg = update.message || update.edited_message;
 const action = update.action || '';
-const isDirectApiCall = action === 'PROCESS_RECEIPT' || action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze';
+
+// ✅ Убрали 'REQUEST_FREEZE_FROM_LK' и 'request_freeze', так как они уже полностью обработаны в Блоке 1
+const isDirectApiCall = action === 'PROCESS_RECEIPT' || action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE';
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
