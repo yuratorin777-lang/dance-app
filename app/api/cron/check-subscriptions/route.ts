@@ -43,19 +43,18 @@ export async function GET(req: NextRequest) {
         groupChatId, 
         paymentsTopicId, 
         triggerReason,
-        phone,       // Если Google Script возвращает номер телефона
-        parentPhone  // Вспомогательный вариант наименования
+        phone,       
+        parentPhone, 
+        subscription // 👈 Подписка из колонки O (если передается из Google Script)
       } = item;
 
       const formattedDate = formatDate(validUntil);
 
-      // Формируем динамическую ссылку на вход в ЛК по номеру телефона
       const userPhone = phone || parentPhone || '';
       const loginUrl = userPhone 
         ? `https://dancekids-lk.vercel.app/login?phone=${encodeURIComponent(userPhone)}`
         : `https://dancekids-lk.vercel.app/login`;
 
-      // Формируем упоминание родителя из Колонки F
       let parentMention = '';
       if (parentTgId) {
         const rawTg = String(parentTgId).trim();
@@ -71,37 +70,53 @@ export async function GET(req: NextRequest) {
       const mentionHeader = parentMention ? `${parentMention}, обратите внимание!\n\n` : '';
 
       let text = '';
+      let pushTitle = 'DanceKidsPRO';
+      let pushText = '';
+
       if (triggerReason === 'balance_low') {
-        // ТОЛЬКО про остаток занятий
         text = `${mentionHeader}⚠️ <b>Заканчиваются занятия по абонементу!</b>\n\n` +
                `Ученик: <b>${studentName}</b>\n` +
                `Остаток занятий: <b>${balanceLessons}</b>\n\n` +
                `Пожалуйста, не забудьте своевременно оплатить следующий абонемент! 💃🏻`;
+        
+        pushTitle = `Занятия заканчиваются (${studentName})`;
+        pushText = `Осталось занятий: ${balanceLessons}. Пополните баланс в ЛК!`;
+
       } else if (triggerReason === 'date_expiring') {
-        // ТОЛЬКО про срок действия и сколько дней осталось
         const daysText = diffDays === 0 ? 'сегодня' : `осталось дней: <b>${diffDays}</b>`;
         text = `${mentionHeader}⏳ <b>Заканчивается срок действия абонемента!</b>\n\n` +
                `Ученик: <b>${studentName}</b>\n` +
                `Абонемент действует до: <b>${formattedDate}</b> (${daysText})\n\n` +
                `Пожалуйста, продлите абонемент, чтобы зафиксировать место в группе! 💃🏻`;
+
+        pushTitle = `Срок абонемента истекает (${studentName})`;
+        pushText = `Действует до ${formattedDate}. Продлите абонемент в ЛК!`;
+
       } else if (triggerReason === 'expired') {
-        // ТОЛЬКО про то, что срок уже истёк
         text = `${mentionHeader}🚫 <b>Срок действия абонемента истёк!</b>\n\n` +
                `Ученик: <b>${studentName}</b>\n` +
                `Дата окончания: <b>${formattedDate}</b>\n\n` +
                `Для возобновления посещений, пожалуйста, произведите оплату или свяжитесь с администратором.`;
+
+        pushTitle = `Абонемент истёк (${studentName})`;
+        pushText = `Дата окончания: ${formattedDate}. Оплатите для возобновления посещений.`;
       }
 
       if (!text) continue;
 
-      // 1. Отправляем в ЛС родителю (только если в колонке записан числовой ID, а не @username)
+      // 1. Отправляем в ЛС родителю Telegram
       if (parentTgId && !isNaN(Number(parentTgId))) {
         await sendTelegramMessage(botToken, parentTgId, text, loginUrl);
       }
 
-      // 2. Отправляем в топик «Вопросы по оплате» рабочей группы
+      // 2. Отправляем в топик рабочей группы Telegram
       if (groupChatId && paymentsTopicId) {
         await sendTelegramMessage(botToken, groupChatId, text, loginUrl, Number(paymentsTopicId));
+      }
+
+      // 3. ➕ ОТПРАВКА WEB PUSH УВЕДОМЛЕНИЯ
+      if (subscription) {
+        await sendWebPushNotification(subscription, pushTitle, pushText, loginUrl);
       }
 
       sentCount++;
@@ -138,5 +153,28 @@ async function sendTelegramMessage(token: string, chatId: string | number, text:
     });
   } catch (err) {
     console.error(`Failed to send TG message to ${chatId}:`, err);
+  }
+}
+
+// Вспомогательная функция для Web Push
+async function sendWebPushNotification(subscription: string | object, title: string, body: string, url: string) {
+  try {
+    const pushAppUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dancekids-lk.vercel.app';
+    
+    // Если подписка пришла объектом, превращаем в строку
+    const subPayload = typeof subscription === 'object' ? JSON.stringify(subscription) : subscription;
+
+    await fetch(`${pushAppUrl}/api/push/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subscription: subPayload,
+        title: title,
+        body: body,
+        url: url
+      }),
+    });
+  } catch (err) {
+    console.error('Failed to send Push notification:', err);
   }
 }
