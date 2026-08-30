@@ -338,15 +338,32 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
-  // Жесткий флаг для ЛК (Direct API)
-  const isDirectFreeze = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
-  let isMedical = isDirectFreeze;
+  let isMedical = false;
   let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // --- 2.1 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
-  if (msg) {
+  // --- 2.1 ДЛЯ DIRECT API (ИЗ ЛК) ---
+  if (isDirectApiCall) {
+    // Жестко определяем тип по входящему action из ЛК
+    isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
+
+    if (fileUrl) {
+      try {
+        const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+        if (imageBase64) {
+          const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+          ocrData = isMedical 
+            ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
+            : await analyzeReceipt(imageBase64, mimeType, caption);
+        }
+      } catch (err) {
+        console.error('Gemini OCR error for direct LK API call:', err);
+      }
+    }
+  } 
+  // --- 2.2 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ ---
+  else if (msg) {
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
@@ -394,37 +411,19 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (imageBase64) {
       try {
-        // Запускаем анализ медицинской справки
         const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-
-        // Проверяем, выявил ли OCR реальные данные справки
         const hasMedicalOcrFields = tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis);
 
         if (hasMedicalOcrFields || (initialMedicalCheck && !lowerCaption.includes('чек') && !lowerCaption.includes('оплата'))) {
           isMedical = true;
           ocrData = tempMedicalData;
         } else {
-          // Если это чек — сбрасываем флаг справки и запускаем распознавание чека
           isMedical = false;
           ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
         }
       } catch (err) {
         console.error('Gemini OCR process error:', err);
       }
-    }
-  } 
-  // --- 2.2 ДЛЯ DIRECT API (ИЗ ЛК) ---
-  else if (isDirectApiCall && fileUrl) {
-    try {
-      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-      if (imageBase64) {
-        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-        ocrData = isMedical 
-          ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-          : await analyzeReceipt(imageBase64, mimeType, caption);
-      }
-    } catch (err) {
-      console.error('Gemini OCR error for direct LK API call:', err);
     }
   }
 
@@ -484,10 +483,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       };
     }
 
-    console.log('Sending payload to GAS:', JSON.stringify(payload));
-
     const result = await callAppsScript(googleScriptUrl, payload);
-    console.log('GAS Result:', JSON.stringify(result));
 
     if (!result) {
       if (chatId && msg && botToken) {
@@ -506,7 +502,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: false, error: 'GAS unreachable' }, { headers: corsHeaders });
     }
 
-    // Сообщение об ошибке отправляется ТОЛЬКО для сообщений из Telegram
     if (msg && chatId && botToken && (result.status === 'error' || result.ok === false)) {
       const errorMsg = result?.message || 'Ученик не найден в базе. Пожалуйста, напишите имя и фамилию ученика в подписи к фото.';
       await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
