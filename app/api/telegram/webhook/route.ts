@@ -408,21 +408,18 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     ];
     const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
-    // АБСОЛЮТНЫЙ ПРИОРИТЕТ 1: Топик справок или ключевые слова справки (ПРИ ОТСУТСТВИИ слов чека)
     if (isMedicalTopic || (hasMedicalKeywords && !hasReceiptKeywords)) {
       isMedical = true;
     } else if (hasReceiptKeywords && !hasMedicalKeywords) {
       isMedical = false;
     }
 
-    // АНАЛИЗ ФАЙЛА ЧЕРЕЗ GEMINI
     if (fileUrl) {
       try {
         const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
         if (imageBase64) {
           const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-          // Если контекст не дал 100% ответа (например, есть и то и то, или ничего) -> смарт-проверка через OCR справки
           if (!isMedicalTopic && (hasReceiptKeywords === hasMedicalKeywords)) {
             const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
             const hasMedicalFields = tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis);
@@ -435,7 +432,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
               ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
             }
           } else {
-            // Вызываем целевой обработчик
             ocrData = isMedical 
               ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
               : await analyzeReceipt(imageBase64, mimeType, caption);
@@ -481,16 +477,20 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
         endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
         days: ocrData?.days || update.days || null,
-        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка',
-        source: msg ? 'TELEGRAM' : 'LK',
+        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка из ЛК',
+        source: isDirectApiCall ? 'LK' : 'TELEGRAM',
 
+        // При отправке из Telegram передаем метаданные чата/треда, при вызове из ЛК — передаем глобальные целевые топики из ENV (если нужны в GAS)
         ...(msg ? {
           telegram_id: chatId,
           chat_id: chatId,
           thread_id: threadId,
           topic_id: threadId,
           message_id: msg?.message_id || null
-        } : {})
+        } : {
+          chat_id: update.chat_id || chatId || null,
+          thread_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null
+        })
       };
     } else {
       payload = {
@@ -505,7 +505,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         timestamp: ocrData?.timestamp || null,
         date: ocrData?.timestamp || update.date || null,
         paymentType: ocrData?.payment_type || 'SUBSCRIPTION',
-        source: msg ? 'TELEGRAM' : 'LK',
+        source: isDirectApiCall ? 'LK' : 'TELEGRAM',
 
         ...(msg ? {
           telegram_id: chatId,
@@ -513,14 +513,18 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           thread_id: threadId,
           topic_id: threadId,
           message_id: msg?.message_id || null
-        } : {})
+        } : {
+          chat_id: update.chat_id || chatId || null,
+          thread_id: update.thread_id || process.env.TELEGRAM_RECEIPTS_TOPIC_ID || null
+        })
       };
     }
 
     const result = await callAppsScript(googleScriptUrl, payload);
 
+    // Бэкенд отвечает в Telegram ТОЛЬКО если запрос пришел из Telegram напрямую (msg существует)
     if (!result) {
-      if (chatId && msg && botToken) {
+      if (msg && chatId && botToken) {
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
