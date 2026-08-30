@@ -338,7 +338,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
-  // Определяем базовый тип для прямого вызова из ЛК
+  // 1. По умолчанию проверяем action из ЛК
   let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
   let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
@@ -350,33 +350,17 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    // Приводим ID топиков из env и telegram к строке для гарантии точного сравнения
-    const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID ? String(process.env.TELEGRAM_MEDICAL_TOPIC_ID) : null;
-    const envPaymentsTopicId = process.env.TELEGRAM_PAYMENTS_TOPIC_ID ? String(process.env.TELEGRAM_PAYMENTS_TOPIC_ID) : null;
-    const currentThreadId = threadId ? String(threadId) : null;
-
-    const isMedicalTopic = !!envMedicalTopicId && (currentThreadId === envMedicalTopicId);
-    const isPaymentsTopic = !!envPaymentsTopicId && (currentThreadId === envPaymentsTopicId);
-
+    // Расширенный список ключевых слов для справок
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
       'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
-      'заморозка', 'заморозить', 'болезни', 'болезнь'
+      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили'
     ];
 
-    const hasMedicalKeywords = medicalKeywords.some(
+    // Если в подписи или названии файла есть слова про болезнь/справку — это справка, иначе чек
+    isMedical = medicalKeywords.some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
-
-    // 🎯 СТРОГОЕ РАЗДЕЛЕНИЕ ТИПА ДОКУМЕНТА:
-    if (isMedicalTopic) {
-      isMedical = true;
-    } else if (isPaymentsTopic) {
-      isMedical = false;
-    } else {
-      // Фолбэк ТОЛЬКО для сообщений из общих чатов без указанного топика
-      isMedical = hasMedicalKeywords;
-    }
 
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
@@ -406,7 +390,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (imageBase64) {
       try {
-        // Сканируем строго в соответствии с определенным типом
+        // Точечный вызов нужного OCR без фолбэков друг на друга
         if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
@@ -493,7 +477,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const result = await callAppsScript(googleScriptUrl, payload);
     console.log('GAS Result:', JSON.stringify(result));
 
-    // Уведомление ОБ ОШИБКЕ ПОИСКА отправляется в TG только для сообщений, отправленных из TG
+    // Если ученик не найден, шлем ошибку в TG только если запрос пришел из TG
     if (msg && chatId && botToken && result?.status === 'error') {
       const errorMsg = result?.message || 'Ученик не найден в базе. Укажите имя в подписи к фото.';
       await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -509,8 +493,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }).catch(e => console.error('Error sending TG error:', e));
     }
 
-    // Вся рассылка успешных карточек при загрузке из ЛК полностью доверена скрипту GAS.
-    // Код отправки сообщений из Vercel удален для предотвращения дублирования.
+    // Все успешные сообщения в TG шлет ТОЛЬКО GAS (на основе колонок G и L во вкладке groups).
+    // Блок отправки из Vercel убран полностью.
 
     return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
   }
