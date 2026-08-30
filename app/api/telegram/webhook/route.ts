@@ -338,8 +338,9 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let threadId = msg?.message_thread_id || update.thread_id || update.topic_id || null;
   let caption = (msg?.caption || update.searchQuery || '').trim();
 
-  // Принудительно устанавливаем флага справки для Direct API
-  let isMedical = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
+  // Жесткий флаг для ЛК (Direct API)
+  const isDirectFreeze = update.action === 'APPLY_FREEZE' || update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_freeze';
+  let isMedical = isDirectFreeze;
   let fileUrl = update.fileUrl || update.docUrl || '';
   let studentId = update.studentId || null;
   let ocrData: any = null;
@@ -363,9 +364,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
-    if (isMedicalTopic || hasMedicalKeywords) {
-      isMedical = true;
-    }
+    const initialMedicalCheck = isMedicalTopic || hasMedicalKeywords;
 
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
@@ -395,20 +394,19 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (imageBase64) {
       try {
-        if (isMedical) {
-          // Если флаг уже точно установлен — сканируем как медицинский документ
-          ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+        // Запускаем анализ медицинской справки
+        const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+
+        // Проверяем, выявил ли OCR реальные данные справки
+        const hasMedicalOcrFields = tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis);
+
+        if (hasMedicalOcrFields || (initialMedicalCheck && !lowerCaption.includes('чек') && !lowerCaption.includes('оплата'))) {
+          isMedical = true;
+          ocrData = tempMedicalData;
         } else {
-          // Если не уверены, сначала пробуем медицинский документ
-          const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          
-          if (tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis || tempMedicalData.child_name)) {
-            isMedical = true;
-            ocrData = tempMedicalData;
-          } else {
-            // Иначе сканируем как обычный чек
-            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-          }
+          // Если это чек — сбрасываем флаг справки и запускаем распознавание чека
+          isMedical = false;
+          ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
         }
       } catch (err) {
         console.error('Gemini OCR process error:', err);
@@ -508,7 +506,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       return NextResponse.json({ ok: false, error: 'GAS unreachable' }, { headers: corsHeaders });
     }
 
-    // Сообщение об ошибке в Telegram (если отправляли из чата)
+    // Сообщение об ошибке отправляется ТОЛЬКО для сообщений из Telegram
     if (msg && chatId && botToken && (result.status === 'error' || result.ok === false)) {
       const errorMsg = result?.message || 'Ученик не найден в базе. Пожалуйста, напишите имя и фамилию ученика в подписи к фото.';
       await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -524,7 +522,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }).catch(e => console.error('TG Error Reply failed:', e));
     }
 
-    // 🟢 Уведомления дублировать из Next.js не нужно — их выполняет GAS в пункте 7 Блока 13.
     return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
   }
 
