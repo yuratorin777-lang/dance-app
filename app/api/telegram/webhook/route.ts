@@ -332,7 +332,7 @@ if (update.action === 'REQUEST_FREEZE_FROM_LK' || update.action === 'request_fre
 // 🔵 2. ОБРАБОТКА ФОТО И ДОКУМЕНТОВ (ТЕЛЕГРАМ / DIRECT API ИЗ ЛК)
 const msg = update.message || update.edited_message;
 const action = update.action || '';
-const isDirectApiCall = action === 'APPLY_FREEZE' || action === 'PROCESS_RECEIPT' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze';
+const isDirectApiCall = action === 'PROCESS_RECEIPT' || action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze';
 
 if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let chatId = msg?.chat?.id || update.chat_id || update.telegram_id || null;
@@ -344,58 +344,49 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   let studentId = update.studentId || null;
   let ocrData: any = null;
 
-  // --- 2.1 ДЛЯ DIRECT API (ИЗ ЛК) ---
-  if (isDirectApiCall) {
-    // Строгое разделение: тип определяется action'ом из ЛК
-    isMedical = action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze';
+  // -------------------------------------------------------------------------
+  // ШАГ 1: СТРОГОЕ ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК / ЗАМОРОЗКА)
+  // -------------------------------------------------------------------------
 
-    if (fileUrl) {
-      try {
-        const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        if (imageBase64) {
-          const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-          if (isMedical) {
-            ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          } else {
-            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-          }
-        }
-      } catch (err) {
-        console.error('Gemini OCR error for direct LK API call:', err);
-      }
-    }
-  } 
-  // --- 2.2 ДЛЯ СООБЩЕНИЙ ИЗ ТЕЛЕГРАМ ЧАТА ---
-  else if (msg) {
+  if (isDirectApiCall) {
+    // Вызов из ЛК: проверяем явные экшены для справок
+    isMedical = (action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE');
+  } else if (msg) {
+    // Вызов из Telegram: определяем по топику и ключевым словам
     const fileName = msg.document?.file_name || '';
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
+    
+    // Проверка, что сообщение отправлено именно в топик справок
     const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
-    // Ключевые слова ЧЕКОВ (Явный приоритет)
-    const receiptKeywords = ['чек', 'оплата', 'оплачено', 'перевод', 'руб', 'rub', '₽', 'сбер', 'т-банк', 'тинькофф', 'альфа', 'каспи', 'квитанция'];
-    const hasReceiptKeywords = receiptKeywords.some(
-      kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
-    );
-
-    // Ключевые слова СПРАВОК
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
-      'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
-      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили'
+      'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр'
     ];
 
     const hasMedicalKeywords = medicalKeywords.some(
       kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
     );
 
+    // Если это топик справок или есть ключевые слова справки — это СПРАВКА
+    if (isMedicalTopic || hasMedicalKeywords) {
+      isMedical = true;
+    } else {
+      isMedical = false; // Во всех остальных случаях в Telegram это ЧЕК
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // ШАГ 2: ПОЛУЧЕНИЕ ССЫЛКИ И ВЫЗОВ OCR
+  // -------------------------------------------------------------------------
+
+  if (msg) {
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
       : msg.document?.file_id;
-
-    let imageBase64: string | null = null;
 
     if (fileId && botToken) {
       try {
@@ -403,7 +394,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         const fileData = await fileRes.json();
         if (fileData.ok && fileData.result?.file_path) {
           fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-          imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
         }
       } catch (e) {
         console.error('Error fetching Telegram file URL:', e);
@@ -414,46 +404,29 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     if (studentIdMatch) {
       studentId = studentIdMatch[0].toUpperCase();
     }
+  }
 
-    const mimeType = msg.document?.mime_type || 'image/jpeg';
-
-    // ОПРЕДЕЛЕНИЕ ТИПА ДОКУМЕНТА (ЧЕК ИЛИ СПРАВКА)
-    if (imageBase64) {
-      try {
-        // Если это топик справок ИЛИ есть явные слова справок И НЕТ слов чека -> Справка
-        if ((isMedicalTopic || hasMedicalKeywords) && !hasReceiptKeywords) {
-          isMedical = true;
+  // OCR запускаем строго по типу, определенному на Шаге 1 (без самовольного переключения)
+  if (fileUrl) {
+    try {
+      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+      if (imageBase64) {
+        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+        
+        if (isMedical) {
           ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-        } 
-        // Если есть явные признаки чека ИЛИ текст подписи содержит сумму/слова оплаты
-        else if (hasReceiptKeywords) {
-          isMedical = false;
+        } else {
           ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-        } 
-        // Если неопределенно — пробуем распознать чек, и только если не чек — справку
-        else {
-          const tempReceipt = await analyzeReceipt(imageBase64, mimeType, caption);
-          if (tempReceipt && (tempReceipt.amount || tempReceipt.payment_type)) {
-            isMedical = false;
-            ocrData = tempReceipt;
-          } else {
-            const tempMedical = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-            if (tempMedical && (tempMedical.start_date || tempMedical.startDate)) {
-              isMedical = true;
-              ocrData = tempMedical;
-            } else {
-              isMedical = false; // По умолчанию чек
-              ocrData = tempReceipt;
-            }
-          }
         }
-      } catch (err) {
-        console.error('Gemini OCR process error:', err);
       }
+    } catch (err) {
+      console.error('Gemini OCR process error:', err);
     }
   }
 
-  // --- 2.3 ОТПРАВКА В GOOGLE APPS SCRIPT ---
+  // -------------------------------------------------------------------------
+  // ШАГ 3: ОТПРАВКА ДАННЫХ В GOOGLE APPS SCRIPT
+  // -------------------------------------------------------------------------
   if (googleScriptUrl) {
     const extractedName = ocrData?.child_name || ocrData?.childName || ocrData?.sender_name || ocrData?.senderName || update.childName || update.child_name || '';
     const searchQuery = (caption || extractedName || update.searchQuery || update.studentName || '').trim();
@@ -471,7 +444,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
 
     if (isMedical) {
       payload = {
-        action: 'APPLY_FREEZE',
+        action: 'APPLY_FREEZE', // Экшен обработки справки в GAS
         ...(studentId ? { studentId } : {}),
         searchQuery: searchQuery,
         childName: extractedName || searchQuery,
@@ -480,17 +453,21 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
         endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
         days: ocrData?.days || update.days || null,
-        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка',
+        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка по болезни',
         source: msg ? 'TELEGRAM' : 'LK',
-        telegram_id: chatId,
-        chat_id: chatId,
-        thread_id: threadId,
-        topic_id: threadId,
-        message_id: msg?.message_id || null
+        
+        // Для вызова из ЛК НЕ передаем chat_id, чтобы GAS не слал второе (дублирующее) сообщение в ТГ
+        ...(msg ? {
+          telegram_id: chatId,
+          chat_id: chatId,
+          thread_id: threadId,
+          topic_id: threadId,
+          message_id: msg?.message_id || null
+        } : {})
       };
     } else {
       payload = {
-        action: 'PROCESS_RECEIPT',
+        action: 'PROCESS_RECEIPT', // Экшен обработки чека в GAS
         ...(studentId ? { studentId } : {}),
         searchQuery: searchQuery,
         studentName: extractedName || searchQuery,
@@ -502,15 +479,17 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         date: ocrData?.timestamp || update.date || null,
         paymentType: ocrData?.payment_type || 'SUBSCRIPTION',
         source: msg ? 'TELEGRAM' : 'LK',
-        telegram_id: chatId,
-        chat_id: chatId,
-        thread_id: threadId,
-        topic_id: threadId,
-        message_id: msg?.message_id || null
+
+        ...(msg ? {
+          telegram_id: chatId,
+          chat_id: chatId,
+          thread_id: threadId,
+          topic_id: threadId,
+          message_id: msg?.message_id || null
+        } : {})
       };
     }
 
-    // Вызываем GAS. Ответственность за отправку оповещения в TG полностью на стороне GAS.
     const result = await callAppsScript(googleScriptUrl, payload);
 
     return NextResponse.json({ ok: true, result, ocrData }, { headers: corsHeaders });
