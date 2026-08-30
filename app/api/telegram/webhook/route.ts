@@ -349,23 +349,9 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   // -------------------------------------------------------------------------
   if (isDirectApiCall) {
     isMedical = (action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze');
-
-    if (fileUrl) {
-      try {
-        const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        if (imageBase64) {
-          const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-          ocrData = isMedical 
-            ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-            : await analyzeReceipt(imageBase64, mimeType, caption);
-        }
-      } catch (err) {
-        console.error('Gemini OCR error for direct LK API call:', err);
-      }
-    }
   } 
   // -------------------------------------------------------------------------
-  // 2.2 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ (УМНЫЙ АНАЛИЗ СПРАВКИ / ЧЕКА)
+  // 2.2 ДЛЯ ТЕЛЕГРАМ СООБЩЕНИЙ
   // -------------------------------------------------------------------------
   else if (msg) {
     const fileName = msg.document?.file_name || '';
@@ -375,23 +361,36 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
     const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
 
+    // Ключевые слова ЧЕКОВ (Высший приоритет)
+    const receiptKeywords = ['чек', 'оплата', 'перевод', 'оплатил', 'оплатила', 'сбер', 'тинькофф', 'альфа', 'квитанция', 'платёж', 'платеж'];
+    const hasReceiptKeywords = receiptKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
+
+    // Ключевые слова СПРАВОК
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
       'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
       'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили'
     ];
+    const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
-    const hasMedicalKeywords = medicalKeywords.some(
-      kw => lowerCaption.includes(kw) || lowerFileName.includes(kw)
-    );
+    // ЖЕСТКАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ:
+    // 1. Если есть слова ЧЕКА — это ЧЕК!
+    if (hasReceiptKeywords) {
+      isMedical = false;
+    } 
+    // 2. Если написали в топик справок ИЛИ есть мед. слова — это СПРАВКА!
+    else if (isMedicalTopic || hasMedicalKeywords) {
+      isMedical = true;
+    } 
+    // 3. Если ничего из этого нет — по умолчанию считаем ЧЕКОМ (родители чаще всего кидают чеки без подписи)
+    else {
+      isMedical = false;
+    }
 
-    const initialMedicalCheck = isMedicalTopic || hasMedicalKeywords;
-
+    // Скачиваем файл Telegram
     const fileId = msg.photo 
       ? msg.photo[msg.photo.length - 1].file_id 
       : msg.document?.file_id;
-
-    let imageBase64: string | null = null;
 
     if (fileId && botToken) {
       try {
@@ -399,7 +398,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         const fileData = await fileRes.json();
         if (fileData.ok && fileData.result?.file_path) {
           fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-          imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
         }
       } catch (e) {
         console.error('Error fetching Telegram file URL:', e);
@@ -410,38 +408,38 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     if (studentIdMatch) {
       studentId = studentIdMatch[0].toUpperCase();
     }
+  }
 
-    const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
-
-    if (imageBase64) {
-      try {
-        // Сначала пробуем распознать как справку
-        const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-        const hasMedicalOcrFields = tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis);
-
-        // Если есть медицинские поля ИЛИ сработала первичная проверка по ключевым словам/топику
-        if (hasMedicalOcrFields || (initialMedicalCheck && !lowerCaption.includes('чек') && !lowerCaption.includes('оплата'))) {
-          isMedical = true;
-          ocrData = tempMedicalData;
+  // -------------------------------------------------------------------------
+  // 2.3 ЗАПУСК НУЖНОГО OCR (СТРОГО ПО ФЛАГУ isMedical)
+  // -------------------------------------------------------------------------
+  if (fileUrl) {
+    try {
+      const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+      if (imageBase64) {
+        const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
+        
+        if (isMedical) {
+          ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
         } else {
-          isMedical = false;
           ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
         }
-      } catch (err) {
-        console.error('Gemini OCR process error:', err);
       }
+    } catch (err) {
+      console.error('Gemini OCR process error:', err);
     }
   }
 
   // -------------------------------------------------------------------------
-  // 2.3 ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT
+  // 2.4 ПОДГОТКА И ОТПРАВКА В GOOGLE APPS SCRIPT
   // -------------------------------------------------------------------------
   if (googleScriptUrl) {
     const captionStudentName = caption || update.studentName || update.searchQuery || '';
     const ocrChildName = ocrData?.child_name || ocrData?.childName || '';
     const ocrSenderName = ocrData?.sender_name || ocrData?.senderName || '';
 
-    // Для СПРАВКИ prioritet у имени из справки, для ЧЕКА prioritet у подписи родителя в ТГ
+    // Для справки — берем имя из справки или подпись.
+    // Для чека — берем ПОДПИСЬ родителя (в 99% случаев там написано "Иван Иванов май"), а не имя из OCR чека!
     const studentSearchQuery = isMedical 
       ? (ocrChildName || captionStudentName || update.childName || '')
       : (captionStudentName || ocrChildName || ocrSenderName || '');
