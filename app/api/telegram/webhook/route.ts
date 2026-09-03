@@ -379,7 +379,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // -------------------------------------------------------------------------
-  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR
+  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR (ИСПРАВЛЕНО)
   // -------------------------------------------------------------------------
   if (isDirectApiCall) {
     // Из ЛК тип определяется строго по action
@@ -416,9 +416,11 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     ];
     const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
+    // ИСПРАВЛЕНИЕ: Если пришел документ/фото в топик справок или есть явные ключевые слова справки — это справка.
+    // ВО ВСЕХ ОСТАЛЬНЫХ СЛУЧАЯХ (по умолчанию) считаем документ ЧЕКОМ!
     if (isMedicalTopic || (hasMedicalKeywords && !hasReceiptKeywords)) {
       isMedical = true;
-    } else if (hasReceiptKeywords && !hasMedicalKeywords) {
+    } else {
       isMedical = false;
     }
 
@@ -428,22 +430,10 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         if (imageBase64) {
           const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-          if (!isMedicalTopic && (hasReceiptKeywords === hasMedicalKeywords)) {
-            const tempMedicalData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-            const hasMedicalFields = tempMedicalData && (tempMedicalData.start_date || tempMedicalData.startDate || tempMedicalData.diagnosis);
-
-            if (hasMedicalFields) {
-              isMedical = true;
-              ocrData = tempMedicalData;
-            } else {
-              isMedical = false;
-              ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-            }
-          } else {
-            ocrData = isMedical 
-              ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-              : await analyzeReceipt(imageBase64, mimeType, caption);
-          }
+          // Вызываем соответствующий распознаватель без ошибочных тестов
+          ocrData = isMedical 
+            ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
+            : await analyzeReceipt(imageBase64, mimeType, caption);
         }
       } catch (err) {
         console.error('Gemini OCR process error:', err);
@@ -452,7 +442,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // -------------------------------------------------------------------------
-  // ШАГ 3: ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT
+  // ШАГ 3: ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT (ИСПРАВЛЕНО)
   // -------------------------------------------------------------------------
   if (googleScriptUrl) {
     const captionStudentName = caption || update.studentName || update.searchQuery || '';
@@ -472,6 +462,9 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
 
+    // Фоллбэк Chat ID для отправки из ЛК (чтобы сообщение точно ушло в общую группу оплат)
+    const fallbackGroupChatId = process.env.TELEGRAM_MAIN_GROUP_ID || process.env.TELEGRAM_ADMIN_GROUP_ID || null;
+
     let payload: Record<string, any>;
 
     if (isMedical) {
@@ -488,7 +481,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка из ЛК',
         source: isDirectApiCall ? 'LK' : 'TELEGRAM',
 
-        // При отправке из Telegram передаем метаданные чата/треда, при вызове из ЛК — передаем глобальные целевые топики из ENV (если нужны в GAS)
         ...(msg ? {
           telegram_id: chatId,
           chat_id: chatId,
@@ -496,7 +488,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           topic_id: threadId,
           message_id: msg?.message_id || null
         } : {
-          chat_id: update.chat_id || chatId || null,
+          chat_id: update.chat_id || fallbackGroupChatId,
           thread_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null
         })
       };
@@ -522,7 +514,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           topic_id: threadId,
           message_id: msg?.message_id || null
         } : {
-          chat_id: update.chat_id || chatId || null,
+          chat_id: update.chat_id || fallbackGroupChatId,
           thread_id: update.thread_id || process.env.TELEGRAM_RECEIPTS_TOPIC_ID || null
         })
       };
