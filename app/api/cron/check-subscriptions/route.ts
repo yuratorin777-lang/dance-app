@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   let pushCount = 0;
 
   // ==========================================
-  // БЛОК 1: TELEGRAM (Старая рабочая логика)
+  // БЛОК 1: TELEGRAM
   // ==========================================
   try {
     const resTg = await fetch(googleScriptUrl, {
@@ -73,21 +73,48 @@ export async function GET(req: NextRequest) {
       const mentionHeader = parentMention ? `${parentMention}, обратите внимание!\n\n` : '';
       let text = '';
 
-      if (triggerReason === 'balance_low') {
+      if (triggerReason === 'balance_one') {
+        // 1. Осталось 1 занятие
+        text = `${mentionHeader}🔔 <b>Напоминание о занятии</b>\n\n` +
+               `Ученик: <b>${studentName}</b>\n` +
+               `У вас осталось <b>последнее 1 занятие</b> по текущему абонементу.\n\n` +
+               `Пожалуйста, оформите новый абонемент заранее, чтобы не пропустить следующие тренировки! 💃🏻`;
+
+      } else if (triggerReason === 'balance_zero') {
+        // 2. Осталось 0 занятий
+        text = `${mentionHeader}✨ <b>Занятия по абонементу завершены</b>\n\n` +
+               `Ученик: <b>${studentName}</b>\n` +
+               `Все занятия по вашему абонементу использованы (остаток: 0).\n\n` +
+               `Чтобы продолжить посещать занятия без перерыва, пожалуйста, произведите оплату следующего абонемента. 🌸`;
+
+      } else if (triggerReason === 'balance_negative') {
+        // 3. Ушел в минус (Мягкое и лояльное)
+        const absBalance = Math.abs(balanceLessons);
+        text = `${mentionHeader}🤝 <b>Занятие в счет следующего абонемента</b>\n\n` +
+               `Ученик: <b>${studentName}</b>\n` +
+               `Вы посетили занятие сверх баланса (посещений в счет нового абонемента: <b>${absBalance}</b>).\n\n` +
+               `Пожалуйста, продлите абонемент в ближайшее время, чтобы мы могли зафиксировать оплату. Спасибо, что вы с нами! ❤️`;
+
+      } else if (triggerReason === 'balance_low') {
+        // Запасная логика для старых триггеров
         text = `${mentionHeader}⚠️ <b>Заканчиваются занятия по абонементу!</b>\n\n` +
                `Ученик: <b>${studentName}</b>\n` +
                `Остаток занятий: <b>${balanceLessons}</b>\n\n` +
                `Пожалуйста, не забудьте своевременно оплатить следующий абонемент! 💃🏻`;
+
       } else if (triggerReason === 'date_expiring') {
+        // 4. Заканчивается срок по дате
         const daysText = diffDays === 0 ? 'сегодня' : `осталось дней: <b>${diffDays}</b>`;
         text = `${mentionHeader}⏳ <b>Заканчивается срок действия абонемента!</b>\n\n` +
                `Ученик: <b>${studentName}</b>\n` +
                `Абонемент действует до: <b>${formattedDate}</b> (${daysText})\n\n` +
                `Пожалуйста, продлите абонемент, чтобы зафиксировать место в группе! 💃🏻`;
+
       } else if (triggerReason === 'expired') {
-        text = `${mentionHeader}🚫 <b>Срок действия абонемента истёк!</b>\n\n` +
+        // 5. Истек срок по дате
+        text = `${mentionHeader}📅 <b>Истёк срок действия абонемента</b>\n\n` +
                `Ученик: <b>${studentName}</b>\n` +
-               `Дата окончания: <b>${formattedDate}</b>\n\n` +
+               `Срок действия абонемента завершился <b>${formattedDate}</b>.\n\n` +
                `Для возобновления посещений, пожалуйста, произведите оплату или свяжитесь с администратором.`;
       }
 
@@ -108,7 +135,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ==========================================
-  // БЛОК 2: PWA WEB PUSH (Новая логика)
+  // БЛОК 2: PWA WEB PUSH
   // ==========================================
   try {
     const resPwa = await fetch(googleScriptUrl, {
@@ -129,7 +156,16 @@ export async function GET(req: NextRequest) {
       let pushTitle = 'DanceKidsPRO';
       let pushText = '';
 
-      if (triggerReason === 'balance_low') {
+      if (triggerReason === 'balance_one') {
+        pushTitle = `Осталось 1 занятие (${studentName})`;
+        pushText = `Оформить новый абонемент можно в Личном Кабинете!`;
+      } else if (triggerReason === 'balance_zero') {
+        pushTitle = `Занятия завершены (${studentName})`;
+        pushText = `Остаток 0 занятий. Продлите абонемент для продолжения!`;
+      } else if (triggerReason === 'balance_negative') {
+        pushTitle = `Занятие в счет абонемента (${studentName})`;
+        pushText = `Посещений сверх баланса: ${Math.abs(balanceLessons)}. Пополните счет в ЛК!`;
+      } else if (triggerReason === 'balance_low') {
         pushTitle = `Занятия заканчиваются (${studentName})`;
         pushText = `Осталось занятий: ${balanceLessons}. Пополните баланс в ЛК!`;
       } else if (triggerReason === 'date_expiring') {
