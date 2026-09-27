@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
+import sharp from 'sharp';
 
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({ apiKey: apiKey || '' });
@@ -7,56 +8,105 @@ const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 const medicalSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    child_name: { type: Type.STRING, description: 'ФИО ребенка / пациента в именительном падеже' },
-    start_date: { type: Type.STRING, description: 'Дата начала освобождения/болезни (ГГГГ-ММ-ДД)' },
-    end_date: { type: Type.STRING, description: 'Дата окончания освобождения/болезни (ГГГГ-ММ-ДД)' },
-    diagnosis: { type: Type.STRING, description: 'Диагноз или причина освобождения (при наличии)' },
-    is_valid: { type: Type.BOOLEAN, description: 'Является ли документ официальной медицинской справкой' },
+    child_name: { 
+      type: Type.STRING, 
+      description: 'ФИО ребенка / пациента в именительном падеже' 
+    },
+    start_date: { 
+      type: Type.STRING, 
+      description: 'Дата начала болезни ГГГГ-ММ-ДД из фразы "с [число]"' 
+    },
+    end_date: { 
+      type: Type.STRING, 
+      description: 'Дата окончания болезни ГГГГ-ММ-ДД из фразы "по [число]"' 
+    },
+    diagnosis: { 
+      type: Type.STRING, 
+      description: 'Краткий диагноз (например: ОРВИ). Читай короткое слово сразу после "Перенес"' 
+    },
+    is_valid: { 
+      type: Type.BOOLEAN, 
+      description: 'Является ли документ официальной медицинской справкой' 
+    },
   },
-  required: ['child_name', 'start_date', 'end_date', 'is_valid'],
+  required: ['child_name', 'start_date', 'end_date', 'diagnosis', 'is_valid'],
 };
+
+// Auto-rotate вертикальных изображений из Telegram
+async function ensureHorizontalImage(imageBase64: string): Promise<string> {
+  try {
+    const buffer = Buffer.from(imageBase64, 'base64');
+    const image = sharp(buffer);
+    const metadata = await image.metadata();
+
+    if (metadata.height && metadata.width && metadata.height > metadata.width) {
+      const rotatedBuffer = await image.rotate(90).toBuffer();
+      return rotatedBuffer.toString('base64');
+    }
+    return imageBase64;
+  } catch (err) {
+    console.error('Ошибка при повороте изображения:', err);
+    return imageBase64;
+  }
+}
 
 export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
+  // Поворачиваем картинку, если с телефона пришла вертикальная
+  const processedBase64 = mimeType.includes('pdf') 
+    ? cleanBase64 
+    : await ensureHorizontalImage(cleanBase64);
+
   const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash-lite', // 🟢 ИСПРАВЛЕНО: Валидное имя модели с 1500 бесплатными запросами/день
+    model: 'gemini-2.5-flash', // 🟢 ИСПРАВЛЕНО: Рабочая модель
     contents: [
       {
         inlineData: {
           mimeType: mimeType,
-          data: cleanBase64,
+          data: processedBase64,
         },
       },
       {
-        text: `Ты эксперт по распознаванию медицинских справок и рукописного текста.
+        text: `Проанализируй медицинскую справку из Telegram чата.
 
-Распознай медицинскую справку или заявление. Извлеки ФИО ребенка и точные даты периода болезни/освобождения (с какого по какое число).
+1. Период болезни находится в строке: "с «[день1]» [месяц1] 2026 по «[день2]» [месяц2] 2026".
+   - start_date: дата из "с [день1]".
+   - end_date: дата из "по [день2]".
 
-КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА ДЛЯ ИМЕНИ РЕБЕНКА (child_name):
-1. Внимательно всматривайся в буквенные сочетания. Рукописные фамилии вроде "Миляева", "Михеева", "Митяева" легко спутать — сверяй каждую букву.
-2. Переводи ФИО ребенка строго в ИМЕНИТЕЛЬНЫЙ ПАДЕЖ (Фамилия Имя)!
-   Примеры:
-   - "Миляевой Дарине" -> "Миляева Дарина"
-   - "Иванову Петру" -> "Иванов Петр"
-3. Дополнительно тебе дана подпись: "${caption}".
-   Если из документа сложно разобрать ФИО или почерк неразборчив, отдай приоритет имени из подписи к фото.
+2. Игнорируй даты в самом низу бланка (дата допуска и дата выдачи справки).
+3. Переведи ФИО ребенка в Именительный падеж ("Миляевой Дарине" -> "Миляева Дарина").
+4. Если ФИО неразборчиво, используй подпись к фото: "${caption}".
+5. Извлеки диагноз (например: "ОРВИ").
 
-Формат ответа — строго по JSON schema.`,
+Год по умолчанию: 2026.
+Верни результат строго по JSON schema.`,
       },
     ],
     config: {
       responseMimeType: 'application/json',
       responseSchema: medicalSchema,
+      temperature: 0.1,
     },
   });
 
   const parsed = JSON.parse(response.text || '{}');
 
-  const startDate = parsed.start_date || parsed.startDate || null;
-  const endDate = parsed.end_date || parsed.endDate || null;
+  let startDate = parsed.start_date || parsed.startDate || null;
+  let endDate = parsed.end_date || parsed.endDate || null;
 
-  // Вычисляем количество дней прямо тут для гарантии
+  // 🛡️ Защита порядка дат
+  if (startDate && endDate) {
+    const s = new Date(startDate);
+    const e = new Date(endDate);
+    if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && s > e) {
+      const temp = startDate;
+      startDate = endDate;
+      endDate = temp;
+    }
+  }
+
+  // Вычисляем дни
   let days = 0;
   if (startDate && endDate) {
     const s = new Date(startDate);
@@ -68,11 +118,15 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 
   return {
     ...parsed,
-    startDate,
-    endDate,
-    days: days > 0 ? days : 1,
+    child_name: parsed.child_name || parsed.childName || null,
     childName: parsed.child_name || parsed.childName || null,
-    reason: parsed.diagnosis || parsed.reason || 'Заболевание'
+    start_date: startDate,
+    end_date: endDate,
+    startDate: startDate,
+    endDate: endDate,
+    days: days > 0 ? days : 1,
+    reason: parsed.diagnosis || 'Заболевание',
+    diagnosis: parsed.diagnosis || 'Заболевание',
   };
 }
 
@@ -105,7 +159,7 @@ export async function POST(req: Request) {
           startDate: extractedData.startDate,
           endDate: extractedData.endDate,
           days: extractedData.days,
-          reason: extractedData.reason || 'Справка',
+          reason: extractedData.reason || 'Справка из ТГ',
           source: 'DIRECT_API'
         }),
       });
