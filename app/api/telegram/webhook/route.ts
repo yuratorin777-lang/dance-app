@@ -416,9 +416,11 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     ];
     const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
-    // ИСПРАВЛЕНИЕ: Если пришел документ/фото в топик справок или есть явные ключевые слова справки — это справка.
-    // ВО ВСЕХ ОСТАЛЬНЫХ СЛУЧАЯХ (по умолчанию) считаем документ ЧЕКОМ!
-    if (isMedicalTopic || (hasMedicalKeywords && !hasReceiptKeywords)) {
+    // 🎯 ИСПРАВЛЕНИЕ ЛОГИКИ ОПРЕДЕЛЕНИЯ СПРАВКИ:
+    // 1. Если есть явные ключевые слова справки
+    // 2. ИЛИ если есть envMedicalTopicId и он совпал
+    // 3. ИЛИ если файл пришел В ЛЮБОЙ ТОПИК (threadId существует) и в подписи НЕТ слов оплаты
+    if (hasMedicalKeywords || isMedicalTopic || (threadId && !hasReceiptKeywords)) {
       isMedical = true;
     } else {
       isMedical = false;
@@ -430,7 +432,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         if (imageBase64) {
           const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-          // Вызываем соответствующий распознаватель без ошибочных тестов
+          // Вызываем соответствующий распознаватель
           ocrData = isMedical 
             ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
             : await analyzeReceipt(imageBase64, mimeType, caption);
@@ -462,7 +464,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
       }
     }
 
-    // Фоллбэк Chat ID для отправки из ЛК (чтобы сообщение точно ушло в общую группу оплат)
     const fallbackGroupChatId = process.env.TELEGRAM_MAIN_GROUP_ID || process.env.TELEGRAM_ADMIN_GROUP_ID || null;
 
     let payload: Record<string, any>;
@@ -478,7 +479,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         startDate: ocrData?.start_date || ocrData?.startDate || update.startDate || null,
         endDate: ocrData?.end_date || ocrData?.endDate || update.endDate || null,
         days: ocrData?.days || update.days || null,
-        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка из ЛК',
+        reason: ocrData?.diagnosis || ocrData?.reason || caption || 'Справка из ТГ',
         source: isDirectApiCall ? 'LK' : 'TELEGRAM',
 
         ...(msg ? {
@@ -486,10 +487,12 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           chat_id: chatId,
           thread_id: threadId,
           topic_id: threadId,
+          topic_medical_id: threadId, // 🎯 ДОБАВЛЕНО: Ключевое поле для Google Apps Script!
           message_id: msg?.message_id || null
         } : {
           chat_id: update.chat_id || fallbackGroupChatId,
-          thread_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null
+          thread_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null,
+          topic_medical_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null
         })
       };
     } else {
