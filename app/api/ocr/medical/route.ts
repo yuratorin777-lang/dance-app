@@ -2,37 +2,40 @@ import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 import sharp from 'sharp';
 
+export const maxDuration = 30;
+
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
+// Точная схема из ЛК
 const medicalSchema: Schema = {
   type: Type.OBJECT,
   properties: {
     child_name: { 
       type: Type.STRING, 
-      description: 'ФИО ребенка / пациента в именительном падеже' 
+      description: 'ФИО ребенка в именительном падеже' 
     },
     start_date: { 
       type: Type.STRING, 
-      description: 'Дата начала болезни в формате YYYY-MM-DD (например: 2026-09-12)' 
+      description: 'Дата начала болезни YYYY-MM-DD из фразы "с [число]"' 
     },
     end_date: { 
       type: Type.STRING, 
-      description: 'Дата окончания болезни в формате YYYY-MM-DD (например: 2026-09-20)' 
+      description: 'Дата окончания болезни YYYY-MM-DD из фразы "по [число]"' 
     },
     diagnosis: { 
       type: Type.STRING, 
-      description: 'Краткий диагноз (например: ОРВИ). Читай короткое слово сразу после "Перенес"' 
+      description: 'Краткий диагноз (например: ОРВИ, Грипп, Заболевание). Читай короткое вписанное слово сразу после слова "Перенес".' 
     },
     is_valid: { 
       type: Type.BOOLEAN, 
-      description: 'Является ли документ официальной медицинской справкой' 
+      description: 'Является ли документ медицинской справкой' 
     },
   },
   required: ['child_name', 'start_date', 'end_date', 'diagnosis', 'is_valid'],
 };
 
-// Auto-rotate вертикальных изображений из Telegram
+// Auto-rotate для вертикальных изображений из Telegram
 async function ensureHorizontalImage(imageBase64: string): Promise<string> {
   try {
     const buffer = Buffer.from(imageBase64, 'base64');
@@ -57,10 +60,7 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
     ? cleanBase64 
     : await ensureHorizontalImage(cleanBase64);
 
-  const today = new Date();
-  const currentDateISO = today.toISOString().split('T')[0]; // ГГГГ-ММ-ДД
-  const currentYear = today.getFullYear();
-
+  // Точный промпт из ЛК
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: [
@@ -71,22 +71,17 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
         },
       },
       {
-        text: `Проанализируй медицинскую справку из Telegram чата.
-Текущая дата сервера: ${currentDateISO}.
-Текущий год по умолчанию: ${currentYear}.
+        text: `Проанализируй медицинскую справку.
 
-Инструкции по извлечению дат:
-1. Внимательно найди строку периода болезни: "с «[день1]» [месяц1] [год1] по «[день2]» [месяц2] [год2]".
-2. Переведи название месяца (например: "января", "февраля", "сентября", "09") и день в стандартный формат YYYY-MM-DD.
-3. Если год в периоде болезни не указан явно, используй год ${currentYear}.
-4. В качестве start_date укажи дату начала болезни (YYYY-MM-DD).
-5. В качестве end_date укажи дату окончания болезни (YYYY-MM-DD).
-6. Игнорируй даты в самом низу бланка (дата выдачи справки, дата допуска к занятиям/врачу).
-7. Переведи ФИО ребенка в Именительный падеж (например: "Миляевой Дарине" -> "Миляева Дарина").
-8. Если ФИО неразборчиво, используй подпись к фото: "${caption}".
-9. Извлеки краткий диагноз (например: "ОРВИ").
+1. Период болезни находится в строке: "с «[день1]» 09 2026 по «[день2]» 09 2026".
+   - start_date: дата из "с [день1]" (например: 22).
+   - end_date: дата из "по [день2]" (например: 25).
 
-Верни результат строго по JSON schema.`,
+2. Игнорируй даты "28" внизу бланка (дата допуска и дата выдачи).
+3. Переведи ФИО в Именительный падеж ("Новиковой Софье" -> "Новикова Софья").
+4. Извлеки диагноз (например: "ОРВИ").
+
+Год: 2026. Подпись: "${caption}".`,
       },
     ],
     config: {
@@ -96,27 +91,13 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
     },
   });
 
+  // Получаем чистый ответ от Gemini (как в ЛК)
   const parsed = JSON.parse(response.text || '{}');
 
-  let startDate = parsed.start_date || parsed.startDate || null;
-  let endDate = parsed.end_date || parsed.endDate || null;
+  let startDate = parsed.start_date || null;
+  let endDate = parsed.end_date || null;
 
-  // 🛡️ Нормализация и защита формата YYYY-MM-DD
-  const normalizeDate = (dStr: string | null) => {
-    if (!dStr) return null;
-    // Если пришло только число (например "22")
-    if (/^\d{1,2}$/.test(dStr.trim())) {
-      const day = dStr.trim().padStart(2, '0');
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      return `${currentYear}-${month}-${day}`;
-    }
-    return dStr;
-  };
-
-  startDate = normalizeDate(startDate);
-  endDate = normalizeDate(endDate);
-
-  // 🛡️ Защита порядка дат
+  // 🛡️ Защита порядка дат из ЛК (без искусственной нормализации)
   if (startDate && endDate) {
     const s = new Date(startDate);
     const e = new Date(endDate);
@@ -127,7 +108,7 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
     }
   }
 
-  // Вычисляем дни
+  // Расчет количества дней для передачи в GAS
   let days = 0;
   if (startDate && endDate) {
     const s = new Date(startDate);
@@ -139,8 +120,8 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 
   return {
     ...parsed,
-    child_name: parsed.child_name || parsed.childName || null,
-    childName: parsed.child_name || parsed.childName || null,
+    child_name: parsed.child_name || null,
+    childName: parsed.child_name || null,
     start_date: startDate,
     end_date: endDate,
     startDate: startDate,
@@ -166,7 +147,9 @@ export async function POST(req: Request) {
     const extractedData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
 
     let gasResult: any = null;
-    const gasUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL;
+    const gasUrl =
+      process.env.NEXT_PUBLIC_GOOGLE_SCRIPT_URL ||
+      process.env.GOOGLE_SCRIPT_WEB_APP_URL;
 
     if (gasUrl) {
       const gasResponse = await fetch(gasUrl, {
@@ -185,7 +168,12 @@ export async function POST(req: Request) {
         }),
       });
 
-      gasResult = await gasResponse.json();
+      const text = await gasResponse.text();
+      try {
+        gasResult = JSON.parse(text);
+      } catch (e) {
+        gasResult = { status: 'success', raw: text };
+      }
     }
 
     return NextResponse.json({
