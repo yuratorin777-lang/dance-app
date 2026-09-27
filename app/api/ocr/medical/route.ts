@@ -14,11 +14,11 @@ const medicalSchema: Schema = {
     },
     start_date: { 
       type: Type.STRING, 
-      description: 'Дата начала болезни ГГГГ-ММ-ДД из фразы "с [число]"' 
+      description: 'Дата начала болезни в формате YYYY-MM-DD (например: 2026-09-12)' 
     },
     end_date: { 
       type: Type.STRING, 
-      description: 'Дата окончания болезни ГГГГ-ММ-ДД из фразы "по [число]"' 
+      description: 'Дата окончания болезни в формате YYYY-MM-DD (например: 2026-09-20)' 
     },
     diagnosis: { 
       type: Type.STRING, 
@@ -53,13 +53,16 @@ async function ensureHorizontalImage(imageBase64: string): Promise<string> {
 export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
 
-  // Поворачиваем картинку, если с телефона пришла вертикальная
   const processedBase64 = mimeType.includes('pdf') 
     ? cleanBase64 
     : await ensureHorizontalImage(cleanBase64);
 
+  const today = new Date();
+  const currentDateISO = today.toISOString().split('T')[0]; // ГГГГ-ММ-ДД
+  const currentYear = today.getFullYear();
+
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash', // 🟢 ИСПРАВЛЕНО: Рабочая модель
+    model: 'gemini-2.5-flash',
     contents: [
       {
         inlineData: {
@@ -69,17 +72,20 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
       },
       {
         text: `Проанализируй медицинскую справку из Telegram чата.
+Текущая дата сервера: ${currentDateISO}.
+Текущий год по умолчанию: ${currentYear}.
 
-1. Период болезни находится в строке: "с «[день1]» [месяц1] 2026 по «[день2]» [месяц2] 2026".
-   - start_date: дата из "с [день1]".
-   - end_date: дата из "по [день2]".
+Инструкции по извлечению дат:
+1. Внимательно найди строку периода болезни: "с «[день1]» [месяц1] [год1] по «[день2]» [месяц2] [год2]".
+2. Переведи название месяца (например: "января", "февраля", "сентября", "09") и день в стандартный формат YYYY-MM-DD.
+3. Если год в периоде болезни не указан явно, используй год ${currentYear}.
+4. В качестве start_date укажи дату начала болезни (YYYY-MM-DD).
+5. В качестве end_date укажи дату окончания болезни (YYYY-MM-DD).
+6. Игнорируй даты в самом низу бланка (дата выдачи справки, дата допуска к занятиям/врачу).
+7. Переведи ФИО ребенка в Именительный падеж (например: "Миляевой Дарине" -> "Миляева Дарина").
+8. Если ФИО неразборчиво, используй подпись к фото: "${caption}".
+9. Извлеки краткий диагноз (например: "ОРВИ").
 
-2. Игнорируй даты в самом низу бланка (дата допуска и дата выдачи справки).
-3. Переведи ФИО ребенка в Именительный падеж ("Миляевой Дарине" -> "Миляева Дарина").
-4. Если ФИО неразборчиво, используй подпись к фото: "${caption}".
-5. Извлеки диагноз (например: "ОРВИ").
-
-Год по умолчанию: 2026.
 Верни результат строго по JSON schema.`,
       },
     ],
@@ -94,6 +100,21 @@ export async function analyzeMedicalDoc(imageBase64: string, mimeType = 'image/j
 
   let startDate = parsed.start_date || parsed.startDate || null;
   let endDate = parsed.end_date || parsed.endDate || null;
+
+  // 🛡️ Нормализация и защита формата YYYY-MM-DD
+  const normalizeDate = (dStr: string | null) => {
+    if (!dStr) return null;
+    // Если пришло только число (например "22")
+    if (/^\d{1,2}$/.test(dStr.trim())) {
+      const day = dStr.trim().padStart(2, '0');
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      return `${currentYear}-${month}-${day}`;
+    }
+    return dStr;
+  };
+
+  startDate = normalizeDate(startDate);
+  endDate = normalizeDate(endDate);
 
   // 🛡️ Защита порядка дат
   if (startDate && endDate) {
