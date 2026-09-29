@@ -379,7 +379,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // -------------------------------------------------------------------------
-  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR (ИСПРАВЛЕНО)
+  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR
   // -------------------------------------------------------------------------
   if (isDirectApiCall) {
     // Из ЛК тип определяется строго по action
@@ -403,12 +403,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const lowerCaption = caption.toLowerCase();
     const lowerFileName = fileName.toLowerCase();
 
-    const envMedicalTopicId = process.env.TELEGRAM_MEDICAL_TOPIC_ID;
-    const isMedicalTopic = !!envMedicalTopicId && (String(threadId) === String(envMedicalTopicId));
-
-    const receiptKeywords = ['чек', 'оплата', 'перевод', 'оплатил', 'оплатила', 'сбер', 'тинькофф', 'альфа', 'квитанция', 'платёж', 'платеж'];
-    const hasReceiptKeywords = receiptKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
-
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
       'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
@@ -416,26 +410,27 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     ];
     const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
-    // 🎯 ИСПРАВЛЕНИЕ ЛОГИКИ ОПРЕДЕЛЕНИЯ СПРАВКИ:
-    // 1. Если есть явные ключевые слова справки
-    // 2. ИЛИ если есть envMedicalTopicId и он совпал
-    // 3. ИЛИ если файл пришел В ЛЮБОЙ ТОПИК (threadId существует) и в подписи НЕТ слов оплаты
-    if (hasMedicalKeywords || isMedicalTopic || (threadId && !hasReceiptKeywords)) {
-      isMedical = true;
-    } else {
-      isMedical = false;
-    }
-
     if (fileUrl) {
       try {
         const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
         if (imageBase64) {
           const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-          // Вызываем соответствующий распознаватель
-          ocrData = isMedical 
-            ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-            : await analyzeReceipt(imageBase64, mimeType, caption);
+          // Если в тексте прямо написаны слова справки — сканируем как справку
+          if (hasMedicalKeywords) {
+            isMedical = true;
+            ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+          } else {
+            // По умолчанию пробуем сканировать как чек
+            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
+            
+            // Проверяем ответ от Gemini: если он распознал диагноз или специфичные поля справки
+            if (ocrData?.is_valid || ocrData?.diagnosis) {
+              isMedical = true;
+            } else {
+              isMedical = false;
+            }
+          }
         }
       } catch (err) {
         console.error('Gemini OCR process error:', err);
@@ -444,7 +439,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // -------------------------------------------------------------------------
-  // ШАГ 3: ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT (ИСПРАВЛЕНО)
+  // ШАГ 3: ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT
   // -------------------------------------------------------------------------
   if (googleScriptUrl) {
     const captionStudentName = caption || update.studentName || update.searchQuery || '';
@@ -463,8 +458,6 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         if (cleanVal >= 100) finalAmount = cleanVal;
       }
     }
-
-    const fallbackGroupChatId = process.env.TELEGRAM_MAIN_GROUP_ID || process.env.TELEGRAM_ADMIN_GROUP_ID || null;
 
     let payload: Record<string, any>;
 
@@ -487,12 +480,11 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           chat_id: chatId,
           thread_id: threadId,
           topic_id: threadId,
-          topic_medical_id: threadId, // 🎯 ДОБАВЛЕНО: Ключевое поле для Google Apps Script!
+          topic_medical_id: threadId,
           message_id: msg?.message_id || null
         } : {
-          chat_id: update.chat_id || fallbackGroupChatId,
-          thread_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null,
-          topic_medical_id: update.thread_id || process.env.TELEGRAM_MEDICAL_TOPIC_ID || null
+          chat_id: update.chat_id || null,
+          thread_id: update.thread_id || null
         })
       };
     } else {
@@ -517,8 +509,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
           topic_id: threadId,
           message_id: msg?.message_id || null
         } : {
-          chat_id: update.chat_id || fallbackGroupChatId,
-          thread_id: update.thread_id || process.env.TELEGRAM_RECEIPTS_TOPIC_ID || null
+          chat_id: update.chat_id || null,
+          thread_id: update.thread_id || null
         })
       };
     }
