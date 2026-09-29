@@ -379,7 +379,7 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // -------------------------------------------------------------------------
-  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR
+  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR (ИСПРАВЛЕНО)
   // -------------------------------------------------------------------------
   if (isDirectApiCall) {
     // Из ЛК тип определяется строго по action
@@ -406,7 +406,8 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
     const medicalKeywords = [
       'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
       'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
-      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили'
+      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили',
+      'справку', 'болеем', 'не будем'
     ];
     const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
 
@@ -416,19 +417,22 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
         if (imageBase64) {
           const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-          // Если в тексте прямо написаны слова справки — сканируем как справку
           if (hasMedicalKeywords) {
+            // 1. Если есть явно слова справки — вызываем медицинский OCR
             isMedical = true;
             ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
           } else {
-            // По умолчанию пробуем сканировать как чек
-            ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
-            
-            // Проверяем ответ от Gemini: если он распознал диагноз или специфичные поля справки
-            if (ocrData?.is_valid || ocrData?.diagnosis) {
+            // 2. Если ключевых слов нет — СНАЧАЛА проверяем через медицинский OCR, есть ли в документе даты болезни/диагноз
+            const medicalResult = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+
+            if (medicalResult && (medicalResult.start_date || medicalResult.startDate || medicalResult.diagnosis)) {
+              // Это справка!
               isMedical = true;
+              ocrData = medicalResult;
             } else {
+              // 3. Дат болезни и диагноза нет — сканируем как чек
               isMedical = false;
+              ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
             }
           }
         }
