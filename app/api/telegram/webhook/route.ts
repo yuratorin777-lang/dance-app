@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { analyzeReceipt } from '../../ocr/receipt/route';
+import { analyzeReceipt, classifyDocumentType } from '../../ocr/receipt/route';
 import { analyzeMedicalDoc } from '../../ocr/medical/route';
 
 export const dynamic = 'force-dynamic';
@@ -379,68 +379,56 @@ if ((msg && (msg.photo || msg.document)) || isDirectApiCall) {
   }
 
   // -------------------------------------------------------------------------
-  // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR (ИСПРАВЛЕНО)
-  // -------------------------------------------------------------------------
-  if (isDirectApiCall) {
-    // Из ЛК тип определяется строго по action
-    isMedical = (action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze');
-    
-    if (fileUrl) {
-      try {
-        const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        if (imageBase64) {
-          const mimeType = fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-          ocrData = isMedical 
-            ? await analyzeMedicalDoc(imageBase64, mimeType, caption)
-            : await analyzeReceipt(imageBase64, mimeType, caption);
-        }
-      } catch (err) {
-        console.error('Gemini OCR error for direct LK API call:', err);
-      }
-    }
-  } else if (msg) {
-    const fileName = msg.document?.file_name || '';
-    const lowerCaption = caption.toLowerCase();
-    const lowerFileName = fileName.toLowerCase();
+      // ШАГ 2: ОПРЕДЕЛЕНИЕ ТИПА (СПРАВКА / ЧЕК) И ВЫЗОВ OCR
+      // -------------------------------------------------------------------------
+      if (fileUrl) {
+        try {
+          const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
+          if (imageBase64) {
+            const mimeType = msg?.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-    const medicalKeywords = [
-      'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
-      'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
-      'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили',
-      'справку', 'болеем', 'не будем'
-    ];
-    const hasMedicalKeywords = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
-
-    if (fileUrl) {
-      try {
-        const imageBase64 = await downloadTelegramFileAsBase64(fileUrl);
-        if (imageBase64) {
-          const mimeType = msg.document?.mime_type || (fileUrl.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
-
-          if (hasMedicalKeywords) {
-            // 1. Если есть явно слова справки — вызываем медицинский OCR
-            isMedical = true;
-            ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-          } else {
-            // 2. Если ключевых слов нет — СНАЧАЛА проверяем через медицинский OCR, есть ли в документе даты болезни/диагноз
-            const medicalResult = await analyzeMedicalDoc(imageBase64, mimeType, caption);
-
-            if (medicalResult && (medicalResult.start_date || medicalResult.startDate || medicalResult.diagnosis)) {
-              // Это справка!
-              isMedical = true;
-              ocrData = medicalResult;
+            if (isDirectApiCall) {
+              // 1. Вызов из ЛК по action
+              isMedical = (action === 'PROCESS_MEDICAL' || action === 'APPLY_FREEZE' || action === 'REQUEST_FREEZE_FROM_LK' || action === 'request_freeze');
             } else {
-              // 3. Дат болезни и диагноза нет — сканируем как чек
-              isMedical = false;
+              // 2. Вызов из Telegram
+              const fileName = msg?.document?.file_name || '';
+              const lowerCaption = caption.toLowerCase();
+              const lowerFileName = fileName.toLowerCase();
+
+              const medicalKeywords = [
+                'справка', 'больничный', 'мед', 'освобождение', 'освобожден', 'врач', 
+                'illness', 'doctor', 'заболел', 'болел', 'заболела', 'диагноз', 'педиатр', 
+                'заморозка', 'заморозить', 'болезни', 'болезнь', 'пропустим', 'пропустили',
+                'справку', 'болеем', 'не будем'
+              ];
+              const receiptKeywords = ['чек', 'оплата', 'оплатил', 'перевод', 'сбер', 'тинькофф', 'оплачено', 'руб'];
+
+              const hasMed = medicalKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
+              const hasRec = receiptKeywords.some(kw => lowerCaption.includes(kw) || lowerFileName.includes(kw));
+
+              if (hasMed && !hasRec) {
+                isMedical = true;
+              } else if (hasRec && !hasMed) {
+                isMedical = false;
+              } else {
+                // Если по ключевым словам неясно — просимclassifyDocumentType определить тип
+                const docType = await classifyDocumentType(imageBase64, mimeType, caption);
+                isMedical = (docType === 'MEDICAL');
+              }
+            }
+
+            // 3. Вызываем целевой парсер по итоговой переменной isMedical
+            if (isMedical) {
+              ocrData = await analyzeMedicalDoc(imageBase64, mimeType, caption);
+            } else {
               ocrData = await analyzeReceipt(imageBase64, mimeType, caption);
             }
           }
+        } catch (err) {
+          console.error('Gemini OCR process error:', err);
         }
-      } catch (err) {
-        console.error('Gemini OCR process error:', err);
       }
-    }
-  }
 
   // -------------------------------------------------------------------------
   // ШАГ 3: ПОДГОТОВКА И ОТПРАВКА В GOOGLE APPS SCRIPT

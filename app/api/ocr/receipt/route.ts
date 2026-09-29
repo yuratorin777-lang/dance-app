@@ -18,6 +18,45 @@ const responseSchema: Schema = {
   required: ['amount', 'status'],
 };
 
+export async function classifyDocumentType(imageBase64: string, mimeType = 'image/jpeg', caption = ''): Promise<'MEDICAL' | 'RECEIPT'> {
+  const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash-lite',
+      contents: [
+        {
+          inlineData: {
+            mimeType: mimeType,
+            data: cleanBase64,
+          },
+        },
+        {
+          text: `Посмотри на изображение/документ и подпись к нему: "${caption}".
+Определи тип документа:
+
+1. "RECEIPT" — банковский чек, квитанция, сбербанк онлайн, перевод, чек об оплате.
+2. "MEDICAL" — медицинская справка, больничный лист, справка от врача, диагноз, освобождение от занятий, документ с печатями поликлиники.
+
+Верни СТРОГО JSON: {"document_type": "RECEIPT"} или {"document_type": "MEDICAL"}`,
+        },
+      ],
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const text = response.text || '';
+    const cleanJson = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleanJson);
+
+    return parsed.document_type === 'MEDICAL' ? 'MEDICAL' : 'RECEIPT';
+  } catch (err) {
+    console.error('Classification error:', err);
+    return 'RECEIPT';
+  }
+}
+
 export async function analyzeReceipt(imageBase64: string, mimeType = 'image/jpeg', caption = '') {
   // Очищаем Base64 от любого префикса (image, application/pdf и т.д.)
   const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
