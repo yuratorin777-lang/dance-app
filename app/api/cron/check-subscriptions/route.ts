@@ -15,11 +15,12 @@ function formatDate(dateStr: string | Date): string {
 }
 
 export async function GET(req: NextRequest) {
+  /*
   const authHeader = req.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
+*/
   const googleScriptUrl = process.env.GOOGLE_SCRIPT_WEB_APP_URL || '';
   const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
 
